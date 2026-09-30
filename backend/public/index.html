@@ -3,53 +3,124 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>SmartShift Swap – GastroEvolution Jobs</title>
+  <title>SmartShift Swap – Spontanaushilfen für die Gastronomie | GastroEvolution</title>
+  <meta name="description" content="Schicht ausgefallen? Finden Sie kurzfristig verifizierte Aushilfen in Ihrer Region – Dienstplan, Zeiterfassung und Sofortmeldung inklusive.">
   <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="fonts.css">
   <link rel="stylesheet" href="app.css">
 </head>
 <body>
   <header class="top">
-    <div class="brand">GastroEvolution <span>SmartShift Swap</span></div>
-    <div id="userbox" class="userbox" hidden>
-      <span id="restaurantName"></span>
-      <button id="logout" class="link">Abmelden</button>
+    <a class="brand" href="/app/" id="home">
+      <span class="mark" aria-hidden="true">G</span>
+      <span><strong>GastroEvolution</strong><small>SmartShift Swap</small></span>
+    </a>
+    <nav id="nav" class="nav" aria-label="Hauptnavigation">
+      <a href="#so-gehts" class="navlink">So funktioniert’s</a>
+      <a href="#vorteile" class="navlink">Vorteile</a>
+      <a href="https://gastroevolution.de/" class="navlink">Zu GastroEvolution</a>
+    </nav>
+    <div class="actions-top">
+      <div id="guestbox" class="row-gap">
+        <button id="goLogin" class="btn ghost" type="button">Anmelden</button>
+        <button id="goRegister" class="btn accent" type="button"><span class="long">Betrieb registrieren</span><span class="short">Registrieren</span></button>
+      </div>
+      <div id="userbox" class="row-gap" hidden>
+        <span id="restaurantName" class="who"></span>
+        <button id="logout" class="btn ghost" type="button">Abmelden</button>
+      </div>
     </div>
   </header>
 
   <main>
     <div id="msg" class="msg" role="alert" hidden></div>
 
-    <!-- Anmeldung / Registrierung -->
-    <section id="auth" class="card narrow" hidden>
-      <div class="tabs">
-        <button id="tabLogin" class="tab active" type="button">Anmelden</button>
-        <button id="tabRegister" class="tab" type="button">Betrieb registrieren</button>
-      </div>
-
-      <form id="loginForm" class="form">
-        <label>E-Mail<input name="email" type="email" autocomplete="username" required></label>
-        <label>Passwort<input name="password" type="password" autocomplete="current-password" required></label>
-        <button class="primary">Anmelden</button>
-      </form>
-
-      <form id="registerForm" class="form" hidden>
-        <p class="hint">Kurzfristig Personal finden: Schichten in Ihrem Umkreis (max. 25 km) an verifizierte Aushilfen ausschreiben.</p>
-        <label>Name des Betriebs<input name="restaurantName" required minlength="2"></label>
-        <label>Straße und Hausnummer<input name="street" autocomplete="street-address" required></label>
-        <div class="row">
-          <label>PLZ<input name="zip" inputmode="numeric" pattern="\d{5}" maxlength="5" autocomplete="postal-code" required></label>
-          <label class="grow">Ort<input name="city" autocomplete="address-level2" required></label>
+    <!-- Startseite -->
+    <div id="landing">
+      <section class="hero">
+        <div class="hero-text">
+          <span class="eyebrow"><i></i>Für Restaurants, Bars &amp; Hotels</span>
+          <h1>Schicht ausgefallen?<br><em>Freitagabend gerettet.</em></h1>
+          <p class="lead">Schreiben Sie die offene Schicht direkt aus Ihrem Dienstplan aus. Verifizierte Aushilfen aus Ihrer Region nehmen sie per Wisch an – Zeiterfassung und Sofortmeldung laufen automatisch mit.</p>
+          <div class="cta">
+            <button id="ctaRegister" class="btn accent lg" type="button">Jetzt kostenlos starten <span aria-hidden="true">→</span></button>
+            <span class="fine">Registrierung in 2 Minuten · Umkreis bis 25 km</span>
+          </div>
         </div>
-        <label>Betriebsnummer (8 Ziffern)<input name="betriebsnummer" inputmode="numeric" pattern="\d{8}" maxlength="8" required>
-          <small>Wird für die gesetzliche Sofortmeldung der Aushilfen benötigt.</small></label>
-        <label>E-Mail<input name="email" type="email" autocomplete="username" required></label>
-        <label>Passwort (mind. 10 Zeichen)<input name="password" type="password" minlength="10" autocomplete="new-password" required></label>
-        <button class="primary">Registrieren</button>
-      </form>
+        <div class="hero-visual" aria-hidden="true">
+          <div class="ticket">
+            <div class="ticket-head"><span>Schicht-Ausschreibung</span><span>Fr · 18–02 Uhr</span></div>
+            <dl>
+              <div><dt>Position</dt><dd>Barkeeper</dd></div>
+              <div><dt>Stundensatz</dt><dd>19,00 €</dd></div>
+              <div><dt>Umkreis</dt><dd>25 km</dd></div>
+              <div class="rule"></div>
+              <div><dt>Aushilfen im Pool</dt><dd>verifiziert</dd></div>
+              <div class="total"><dt>Sofortmeldung</dt><dd>automatisch</dd></div>
+            </dl>
+            <div class="stamp">Besetzt</div>
+            <small class="sample">Beispiel</small>
+          </div>
+        </div>
+      </section>
+
+      <section id="so-gehts" class="section">
+        <h2>So funktioniert’s</h2>
+        <ol class="steps">
+          <li><b>1</b><h3>Schicht ausschreiben</h3><p>Position, Zeit, Stundensatz und Anforderungen festlegen – in unter einer Minute.</p></li>
+          <li><b>2</b><h3>Aushilfen melden sich</h3><p>Passende, verifizierte Aushilfen im Umkreis sehen die Schicht und bewerben sich.</p></li>
+          <li><b>3</b><h3>Bestätigen – fertig</h3><p>Sie wählen aus. Dienstplan-Eintrag, Zeiterfassung und Meldedaten entstehen automatisch.</p></li>
+        </ol>
+      </section>
+
+      <section id="vorteile" class="section">
+        <h2>Warum SmartShift Swap</h2>
+        <div class="features">
+          <article><h3>Geprüfter Pool</h3><p>Nur verifizierte Aushilfen mit geprüften Fähigkeiten, Bewertungen anderer Wirte und validierten Pflichtangaben.</p></article>
+          <article><h3>Rechtssicher</h3><p>Die Daten für die gesetzliche Sofortmeldung liegen exportbereit vor – wichtig bei Kontrollen am Wochenende.</p></article>
+          <article><h3>Zuverlässig</h3><p>Wer unentschuldigt nicht erscheint, wird automatisch gesperrt. So bleibt der Pool verlässlich.</p></article>
+        </div>
+      </section>
+    </div>
+
+    <!-- Anmeldung / Registrierung -->
+    <section id="auth" class="auth" hidden>
+      <div class="card narrow">
+        <div class="tabs" role="tablist">
+          <button id="tabLogin" class="tab active" type="button" role="tab">Anmelden</button>
+          <button id="tabRegister" class="tab" type="button" role="tab">Betrieb registrieren</button>
+        </div>
+
+        <form id="loginForm" class="form">
+          <label>E-Mail<input name="email" type="email" autocomplete="username" required></label>
+          <label>Passwort<input name="password" type="password" autocomplete="current-password" required></label>
+          <button class="btn accent block">Anmelden</button>
+        </form>
+
+        <form id="registerForm" class="form" hidden>
+          <p class="hint">Schichten in Ihrem Umkreis (max. 25 km) an verifizierte Aushilfen ausschreiben.</p>
+          <label>Name des Betriebs<input name="restaurantName" required minlength="2"></label>
+          <label>Straße und Hausnummer<input name="street" autocomplete="street-address" required></label>
+          <div class="row">
+            <label>PLZ<input name="zip" inputmode="numeric" pattern="\d{5}" maxlength="5" autocomplete="postal-code" required></label>
+            <label class="grow">Ort<input name="city" autocomplete="address-level2" required></label>
+          </div>
+          <label>Betriebsnummer (8 Ziffern)<input name="betriebsnummer" inputmode="numeric" pattern="\d{8}" maxlength="8" required>
+            <small>Wird für die gesetzliche Sofortmeldung der Aushilfen benötigt.</small></label>
+          <label>E-Mail<input name="email" type="email" autocomplete="username" required></label>
+          <label>Passwort (mind. 10 Zeichen)<input name="password" type="password" minlength="10" autocomplete="new-password" required></label>
+          <button class="btn accent block">Kostenlos registrieren</button>
+        </form>
+      </div>
     </section>
 
     <!-- Bereich für den Wirt -->
     <div id="dash" hidden>
+      <div class="dash-head">
+        <span class="eyebrow"><i></i>Ihr Bereich</span>
+        <h1 class="h-md">Schichten <em>verwalten</em></h1>
+      </div>
+
       <section class="card">
         <h2>Schicht ausschreiben</h2>
         <form id="shiftForm" class="form grid">
@@ -68,22 +139,26 @@
             <input name="requirements" maxlength="500" placeholder="z. B. Erfahrung an der Cocktailbar erforderlich">
           </label>
           <label class="span">Tätigkeitsschlüssel (9 Ziffern, optional)
-            <input name="activityKey" inputmode="numeric" pattern="\d{9}" maxlength="9" placeholder="z. B. laut Schlüsselverzeichnis der Bundesagentur für Arbeit">
+            <input name="activityKey" inputmode="numeric" pattern="\d{9}" maxlength="9" placeholder="laut Schlüsselverzeichnis der Bundesagentur für Arbeit">
             <small>Wird für die Sofortmeldung der Aushilfe benötigt. Ohne Angabe müssen Sie ihn bei der Meldung selbst ergänzen.</small>
           </label>
-          <div class="span"><button class="primary">Schicht veröffentlichen</button></div>
+          <div class="span"><button class="btn accent">Schicht veröffentlichen</button></div>
         </form>
       </section>
 
       <section>
-        <h2>Meine Schichten</h2>
+        <h2 class="list-title">Meine Schichten</h2>
         <div id="shifts" class="shifts"></div>
         <p id="empty" class="hint" hidden>Noch keine Schichten ausgeschrieben.</p>
       </section>
     </div>
   </main>
 
-  <footer>© GastroEvolution · Impressum · Datenschutz</footer>
+  <footer>
+    <span>© GastroEvolution</span>
+    <a href="https://gastroevolution.de/impressum">Impressum</a>
+    <a href="https://gastroevolution.de/datenschutz">Datenschutz</a>
+  </footer>
   <script src="app.js" defer></script>
 </body>
 </html>

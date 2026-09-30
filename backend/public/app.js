@@ -41,13 +41,24 @@ async function busy(btn, fn) {
 }
 
 // ---- Anmeldung ----
-function logout() { store.set(null); $('dash').hidden = true; $('userbox').hidden = true; $('auth').hidden = false; }
+function view(name) {
+  $('landing').hidden = name !== 'landing'; $('auth').hidden = name !== 'auth'; $('dash').hidden = name !== 'dash';
+  const guest = name !== 'dash';
+  $('guestbox').hidden = !guest; $('userbox').hidden = guest; $('nav').hidden = !guest;
+  window.scrollTo({ top: 0 });
+}
+function logout() { store.set(null); view('landing'); }
 function tab(login) {
   $('loginForm').hidden = !login; $('registerForm').hidden = login;
   $('tabLogin').classList.toggle('active', login); $('tabRegister').classList.toggle('active', !login); show('');
 }
 const formData = (form) => Object.fromEntries(new FormData(form));
 
+function openAuth(login) { view('auth'); tab(login); }
+$('goLogin').onclick = () => openAuth(true);
+$('goRegister').onclick = () => openAuth(false);
+$('ctaRegister').onclick = () => openAuth(false);
+$('home').addEventListener('click', (e) => { e.preventDefault(); if (!store.get()) view('landing'); });
 $('tabLogin').onclick = () => tab(true);
 $('tabRegister').onclick = () => tab(false);
 $('logout').onclick = logout;
@@ -91,7 +102,7 @@ async function renderApplicants(box, shift) {
     const stars = a.rating ? `★ ${a.rating} (${a.ratingCount})` : 'noch keine Bewertung';
     box.append(el('div', { class: 'applicant' },
       el('div', {}, el('strong', {}, a.displayName), el('div', { class: 'meta' }, `${stars} · ${a.verifiedSkills.join(', ')}`)),
-      el('button', { class: 'primary', onclick: (ev) => busy(ev.target, async () => {
+      el('button', { class: 'btn accent', onclick: (ev) => busy(ev.target, async () => {
         await api(`/marketplace/shifts/${shift.id}/accept`, { method: 'POST', body: { freelancerId: a.id } });
         show(`${a.displayName} ist bestätigt und im Dienstplan eingetragen.`, true); await loadShifts();
       }) }, 'Bestätigen')));
@@ -135,13 +146,13 @@ async function loadShifts() {
 // ---- Start ----
 const state = { restaurantId: null };
 async function start() {
-  if (!store.get()) return logout();
+  if (!store.get()) return view('landing');
   const me = await api('/auth/me');
   const r = me.restaurants.find((x) => x.role === 'OWNER');
-  if (!r) { show('Für dieses Konto ist kein Betrieb hinterlegt.'); return logout(); }
+  if (!r) { logout(); show('Für dieses Konto ist kein Betrieb hinterlegt.'); return; }
   state.restaurantId = r.id;
   $('restaurantName').textContent = `${r.name} · ${me.email}`;
-  $('auth').hidden = true; $('dash').hidden = false; $('userbox').hidden = false;
+  view('dash');
   await loadShifts();
 }
-start().catch((e) => { show(e.message); logout(); });
+start().catch((e) => { logout(); show(e.message); });
