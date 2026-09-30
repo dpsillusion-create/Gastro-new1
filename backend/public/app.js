@@ -364,7 +364,7 @@ curl -X POST -H "Authorization: Bearer ge_…" -H "Content-Type: application/jso
 }
 
 // ---- Verwaltung (nur Administratoren) ----
-$('adminBtn').onclick = () => openAdmin().catch((e) => show(e.message));
+$('adminBtn').onclick = () => openAdmin().catch(async (e) => { if (state.restaurantId) await start(); show(e.message); }); // bei Ablehnung zurück zu „Meine Schichten“, Meldung bleibt sichtbar
 $('backBtn').onclick = () => start().catch((e) => show(e.message));
 let adminTab = 'overview';
 function openAdmin() { view('admin'); return loadAdmin('overview'); }
