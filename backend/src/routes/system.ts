@@ -6,7 +6,9 @@ const VERSION = process.env.APP_VERSION ?? '1.0.0';
 /** Öffentliche System-Routen (ohne Auth): Statusseite und Health-Check für das Monitoring. */
 export const systemRouter = Router();
 
-systemRouter.get('/', (_req, res) => {
+systemRouter.get('/', (req, res) => {
+  // Browser (Accept: text/html) → Weboberfläche; Monitoring/curl → JSON-Status
+  if (req.accepts(['json', 'html']) === 'html') return res.redirect(302, '/app/');
   res.status(200).json({
     status: 'success',
     message: 'GastroEvolution SmartShift-Swap API läuft einwandfrei.',

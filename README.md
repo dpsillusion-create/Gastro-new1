@@ -27,6 +27,8 @@ Tests: `python3 -m unittest discover -s tests -v`
 | `POST /api/v1/marketplace/shifts/:id/apply` | Bewerben – nur mit validierten SV-Nr./Steuer-ID/Geburtsdatum, nicht gesperrt |
 | `POST /api/v1/marketplace/shifts/:id/accept` | Match: atomar OPEN→MATCHED, Hook für Dienstplan/Zeiterfassung/Sofortmeldung, Webhook `trigger_sofortmeldung_generation` (Outbox) |
 | `GET /api/v1/marketplace/shifts/:id/sofortmeldung-export` | DEÜV-Meldedaten für den Arbeitgeber |
+| `POST /api/v1/auth/register`, `/login`, `GET /auth/me` | Registrierung (Betrieb + Inhaber, Adresse wird geocodiert), Login (JWT, 8 h), Profil |
+| `GET /api/v1/marketplace/my-shifts`, `POST .../shifts/:id/cancel` | Wirt: eigene Schichten mit Bewerbungen, Schicht zurückziehen |
 | `PUT /api/v1/freelancers/me/compliance` | Pflichtangaben einreichen + validieren |
 
 Zuverlässigkeit: `services/reliability.ts` – `registerNoShow` (−0,25, bei < 0,90 → `SUSPENDED` für 30 Tage),
@@ -38,3 +40,6 @@ DEÜV-Schlüssel (Personengruppe 110, Tätigkeitsschlüssel), die Prüfziffernlo
 **Durchlauf-Test gegen die echte Datenbank:** `cd backend && BASE_URL=http://127.0.0.1:3100 npm run smoke`
 (braucht die Umgebungsvariablen des Servers; legt nur Testdaten `@smoketest.invalid` an und löscht sie wieder).
 Mindestlohn: `MIN_WAGE_CENTS` (Standard 1390 = 13,90 €/h, Stand 2026).
+
+**Weboberfläche für Gastronomen:** `https://jobs.gastroevolution.de/app/` (Browser auf `/` werden dorthin geleitet, `curl` bekommt weiter den JSON-Status).
+Dateien: `backend/public/` (statisch, ohne Inline-Skripte wegen der Content-Security-Policy). Ohne neue Abhängigkeiten.

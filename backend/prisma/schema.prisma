@@ -44,6 +44,8 @@ enum MemberRole {
 model User {
   id          String             @id @default(uuid())
   email       String             @unique
+  /// scrypt-Hash; leer für Nutzer, die sich über das bestehende GastroEvolution-Login anmelden
+  passwordHash String?
   memberships RestaurantMember[]
   freelancer  Freelancer?
 }

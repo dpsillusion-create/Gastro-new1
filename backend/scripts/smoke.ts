@@ -88,6 +88,29 @@ async function main() {
   check('Inhaber → 201, Status OPEN', created.status === 201 && created.json.status === 'OPEN', created);
   const shiftId: string = created.json.id;
 
+  console.log('— Registrierung / Login');
+  const reg = { email: 'neu@smoketest.invalid', password: 'ein-langes-passwort', restaurantName: 'Smoketest Restaurant', street: 'Teststr. 2',
+    zip: '20095', city: 'Hamburg', betriebsnummer: '12345678', latitude: 53.55, longitude: 9.99 };
+  check('Registrierung mit kurzem Passwort → 400', (await api('POST', '/api/v1/auth/register', null, { ...reg, password: 'kurz' })).status === 400);
+  const rr = await api('POST', '/api/v1/auth/register', null, reg);
+  check('Registrierung → 201 + Token', rr.status === 201 && !!rr.json.token, rr);
+  check('Doppelte E-Mail → 409', (await api('POST', '/api/v1/auth/register', null, reg)).status === 409);
+  check('Login falsches Passwort → 401', (await api('POST', '/api/v1/auth/login', null, { email: reg.email, password: 'falsch-falsch-falsch' })).status === 401);
+  const li = await api('POST', '/api/v1/auth/login', null, { email: reg.email, password: reg.password });
+  check('Login → 200 + Token', li.status === 200 && !!li.json.token, li);
+  const authed = async (m: string, p: string, b?: unknown) => {
+    const r = await fetch(BASE + p, { method: m, headers: { 'content-type': 'application/json', authorization: `Bearer ${li.json.token}` }, body: b ? JSON.stringify(b) : undefined });
+    const t = await r.text(); return { status: r.status, json: t ? JSON.parse(t) : null };
+  };
+  const me = await authed('GET', '/api/v1/auth/me');
+  check('/me liefert Restaurant als OWNER', me.json?.restaurants?.[0]?.role === 'OWNER', me);
+  const own = await authed('POST', '/api/v1/marketplace/shifts', { ...good, restaurantId: me.json.restaurants[0].id });
+  check('neu registrierter Wirt kann Schicht ausschreiben → 201', own.status === 201, own);
+  const mine = await authed('GET', '/api/v1/marketplace/my-shifts');
+  check('/my-shifts zeigt die Schicht', mine.json?.length === 1, mine);
+  check('Schicht zurückziehen → 204', (await authed('POST', `/api/v1/marketplace/shifts/${own.json.id}/cancel`)).status === 204);
+  check('fremde Restaurant-ID mit eigenem Token → 403', (await authed('POST', '/api/v1/marketplace/shifts', good)).status === 403);
+
   console.log('— Freelancer-Flow');
   const early = await api('POST', `/api/v1/marketplace/shifts/${shiftId}/apply`, fu!.id);
   check('Bewerbung ohne validierte Pflichtangaben → 403', early.status === 403, early);

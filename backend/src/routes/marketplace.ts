@@ -2,8 +2,8 @@ import { Router, type NextFunction, type Request, type RequestHandler, type Resp
 import { z } from 'zod';
 import { prisma } from '../db';
 import { DEFAULT_RADIUS_KM, MAX_RADIUS_KM, MIN_WAGE_CENTS } from '../config';
-import { badRequest, unauthorized } from '../errors';
-import { assertRestaurantManager, authenticate, requireFreelancer } from '../middleware/auth';
+import { badRequest, conflict, notFound, unauthorized } from '../errors';
+import { assertRestaurantManager, assertRestaurantOwner, authenticate, requireFreelancer } from '../middleware/auth';
 import { decrypt } from '../services/crypto';
 import * as svc from '../services/marketplaceService';
 
@@ -21,7 +21,7 @@ const createSchema = z.object({
   requirements: z.string().trim().max(500).optional(),
   activityKey: z.string().regex(/^\d{9}$/, 'activityKey: 9 Ziffern').optional(),
   hourlyRateCents: z.number().int(`hourlyRateCents muss eine ganze Zahl in Cent sein`)
-    .min(MIN_WAGE_CENTS, `Stundensatz unter dem Mindestlohn (${MIN_WAGE_CENTS / 100} €/h)`)
+    .min(MIN_WAGE_CENTS, `Stundensatz unter dem Mindestlohn (${(MIN_WAGE_CENTS / 100).toFixed(2).replace('.', ',')} €/h)`)
     .max(20000, 'Stundensatz unplausibel hoch'),
   startTime: z.coerce.date(),
   endTime: z.coerce.date(),
@@ -111,3 +111,35 @@ marketplaceRouter.get('/shifts/:id/sofortmeldung-export', wrap(async (req, res) 
     status: n.status, missingFields: n.missingFields, data: JSON.parse(decrypt(n.payloadEnc)),
   });
 }));
+
+/** Inhaber/Manager: eigene Schichten (alle zugeordneten Restaurants) inkl. Anzahl offener Bewerbungen. */
+marketplaceRouter.get('/my-shifts', async (req, res, next) => {
+  try {
+    const shifts = await prisma.marketplaceShift.findMany({
+      where: { restaurant: { members: { some: { userId: uid(req), role: { in: ['OWNER', 'MANAGER'] } } } } },
+      orderBy: { startTime: 'desc' }, take: 100,
+      select: {
+        id: true, role: true, requiredSkill: true, requirements: true, hourlyRateCents: true, startTime: true,
+        endTime: true, status: true, restaurant: { select: { id: true, name: true } },
+        _count: { select: { applications: { where: { status: 'PENDING' } } } },
+        assignment: { select: { immediateNotification: { select: { status: true, missingFields: true } } } },
+      },
+    });
+    res.json(shifts.map(({ _count, assignment, ...s }) => ({
+      ...s, pendingApplications: _count.applications, sofortmeldung: assignment?.immediateNotification ?? null,
+    })));
+  } catch (err) { next(err); }
+});
+
+/** Inhaber: offene Schicht zurückziehen. */
+marketplaceRouter.post('/shifts/:id/cancel', async (req, res, next) => {
+  try {
+    const shiftId = idParam.parse(req.params.id);
+    const shift = await prisma.marketplaceShift.findUnique({ where: { id: shiftId } });
+    if (!shift) throw notFound('Schicht nicht gefunden');
+    await assertRestaurantOwner(uid(req), shift.restaurantId);
+    const r = await prisma.marketplaceShift.updateMany({ where: { id: shiftId, status: 'OPEN' }, data: { status: 'CANCELLED' } });
+    if (r.count !== 1) throw conflict('Nur offene Schichten können zurückgezogen werden');
+    res.status(204).end();
+  } catch (err) { next(err); }
+});
