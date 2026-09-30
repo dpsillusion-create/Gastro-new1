@@ -12,13 +12,14 @@ Live: **https://jobs.gastroevolution.de** – Betriebe unter `/app/`, Aushilfen 
 | `backend/` | Node.js/Express-API (TypeScript), Prisma/PostgreSQL, Worker, Tests |
 | `backend/public/` | Oberfläche für Betriebe und Verwaltung (`/app/`), Aushilfen-App (`/jobs/`), Schriften (selbst gehostet) |
 | `backend/scripts/` | `smoke.ts` (Durchlauf-Test), `admin.ts` (Verwaltung per Kommandozeile) |
-| `deploy/` | Deploy-Skript, systemd-Dienste, nginx-Konfiguration, Backup-Skript, Serveranleitung |
+| `deploy/` | Deploy-Skript, systemd-Dienste, nginx-Konfiguration, Backup, Überwachung (`monitor.sh`), `install-cron.sh`, Serveranleitung |
+| `docs/` | `TESTDREHBUCH.md` (Gesamttest), `DATENSCHUTZ-CHECKLISTE.md`, `ENTWURF-NUTZUNGSBEDINGUNGEN.md` (nur Entwurf für den Juristen) |
 
 Start lokal: `cd backend && npm install && cp .env.example .env && npx prisma migrate dev && npm run dev`
 
 ## Funktionen
 **Betriebe:** registrieren (E-Mail-Code, Zustimmung zu Bedingungen), anmelden mit zweitem Faktor, Schichten ausschreiben (Mindestlohn-Prüfung, auch für mehrere Personen mit Nachrücken der Bewerber), Team-Manager einladen, Bewerber mit
-Bewertung und Hygiene-Hinweis sehen, bestätigen, Anwesenheit melden, Schicht abschließen und bewerten, Sofortmeldung als geführter Ablauf (Daten ergänzen, exportieren, als gemeldet abhaken, Erinnerung), Zusage zurücknehmen, Hygienenachweis der zugesagten Aushilfe einsehen, API-Schlüssel für das Zeiterfassungsterminal verwalten.
+Bewertung und Hygiene-Hinweis sehen, bestätigen, Anwesenheit melden, Schicht abschließen und bewerten, Bewerber ablehnen, Betrieb von Aushilfen bewerten lassen, Datenauskunft/Konto löschen, Sofortmeldung als geführter Ablauf (Daten ergänzen, exportieren, als gemeldet abhaken, Erinnerung), Zusage zurücknehmen, Hygienenachweis der zugesagten Aushilfe einsehen, API-Schlüssel für das Zeiterfassungsterminal verwalten.
 
 **Aushilfen:** registrieren (SV-Nummer, Steuer-ID, Geburtsdatum mit Prüfziffern, Hygienenachweis-Upload → automatische Freischaltung),
 Schichten im Umkreis per Wisch annehmen, Bewerbungen verfolgen (Adresse erst nach Zusage), Zusage absagen (kurzfristig = Punktabzug), Profil mit Bewertung und Zuverlässigkeit, Konto löschen.

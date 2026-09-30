@@ -96,6 +96,16 @@ Betrieb legt in der Oberfläche unter „Einstellungen → Zeiterfassungstermina
 `POST /api/v1/integrations/clock-in` mit `{"shiftId": "…"}` beim Einchecken und `GET /api/v1/integrations/shifts` für den Abgleich.
 Sobald ein Schlüssel aktiv ist, wertet der Worker fehlendes Einchecken automatisch als „nicht erschienen“.
 
+### Regelmäßige Aufgaben (Backup + Überwachung) einrichten – ein Befehl
+`bash /opt/smartshift/deploy/install-cron.sh` richtet als root ein: tägliches Backup um 3 Uhr und alle 5 Minuten die Überwachung
+(`deploy/monitor.sh`: /health inkl. Datenbank, beide Dienste, Speicherplatz). Bei Störung kommt nach 2 Fehlschlägen in Folge eine E-Mail an
+`ALERT_EMAIL` (in `/etc/smartshift.env` setzen), bei Entwarnung eine zweite. Protokoll: `/var/log/smartshift-monitor.log`.
+
+### Update einspielen
+**Skript vorher kopieren**, weil es sich beim Aktualisieren selbst überschreibt:
+`cp /opt/smartshift/deploy/deploy.sh /tmp/deploy.sh && BRANCH=claude/cool-cray-gv7yoq bash /tmp/deploy.sh`
+Am Ende prüft das Skript selbst, ob `/health` gesund antwortet, und zeigt sonst die letzten Protokollzeilen.
+
 ### Dienste
 `systemctl status smartshift smartshift-worker` · Logs `journalctl -u smartshift -f` · Health `curl https://jobs.gastroevolution.de/health`
 
