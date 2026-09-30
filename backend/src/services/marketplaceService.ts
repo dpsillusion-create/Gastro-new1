@@ -1,3 +1,4 @@
+import { randomUUID } from 'crypto';
 import { Prisma, Skill } from '@prisma/client';
 import { prisma } from '../db';
 import { conflict, forbidden, notFound } from '../errors';
@@ -10,6 +11,8 @@ import { boundingBox } from './geo';
 export interface CreateShiftInput {
   restaurantId: string; role: string; requiredSkill: Skill; requirements?: string;
   hourlyRateCents: number; startTime: Date; endTime: Date; activityKey?: string;
+  /** Anzahl gesuchter Personen (1–10); jede Stelle wird einzeln besetzt. */
+  positions?: number;
 }
 
 /** Wirt schreibt eine Schicht aus. Geo-Koordinaten kommen vom Restaurant (nie vom Client). */
@@ -18,9 +21,12 @@ export async function createShift(userId: string, input: CreateShiftInput) {
   const r = await prisma.restaurant.findUnique({ where: { id: input.restaurantId } });
   if (!r) throw notFound('Restaurant nicht gefunden');
   if (r.blockedAt) throw forbidden('Dieser Betrieb ist gesperrt – bitte wende dich an den Support');
-  return prisma.marketplaceShift.create({
-    data: { ...input, status: 'OPEN', latitude: r.latitude, longitude: r.longitude, createdById: userId },
-  });
+  const { positions = 1, ...data } = input;
+  const groupId = positions > 1 ? randomUUID() : null;
+  const shifts = await prisma.$transaction(Array.from({ length: positions }, (_, i) => prisma.marketplaceShift.create({
+    data: { ...data, status: 'OPEN', latitude: r.latitude, longitude: r.longitude, createdById: userId, groupId, slotIndex: i + 1, slotCount: positions },
+  })));
+  return { ...shifts[0]!, shiftIds: shifts.map((x) => x.id) };
 }
 
 export interface SearchInput { freelancerId: string; skills: Skill[]; lat: number; lon: number; radiusKm: number; limit: number }
@@ -36,7 +42,8 @@ export async function searchShifts(i: SearchInput) {
   return prisma.$queryRaw<Array<Record<string, unknown>>>(Prisma.sql`
     SELECT * FROM (
       SELECT s.id, s.role, s."requiredSkill", s.requirements, s."hourlyRateCents",
-             s."startTime", s."endTime", r.name AS "restaurantName", r.city,
+             s."startTime", s."endTime", r.name AS "restaurantName", r.city, s."slotCount",
+             CASE WHEN s."groupId" IS NULL THEN 1 ELSE (SELECT count(*)::int FROM "MarketplaceShift" g WHERE g."groupId" = s."groupId" AND g.status = 'OPEN' AND g."startTime" > now()) END AS "openSlots",
              6371.0088 * 2 * asin(least(1, sqrt(
                power(sin(radians(s.latitude - ${i.lat}) / 2), 2) +
                cos(radians(${i.lat})) * cos(radians(s.latitude)) *
@@ -48,8 +55,12 @@ export async function searchShifts(i: SearchInput) {
         AND s."requiredSkill" = ANY(${i.skills}::"Skill"[])
         AND s.latitude  BETWEEN ${b.minLat} AND ${b.maxLat}
         AND s.longitude BETWEEN ${b.minLon} AND ${b.maxLon}
-        AND NOT EXISTS (SELECT 1 FROM "ShiftApplication" a
-                        WHERE a."shiftId" = s.id AND a."freelancerId" = ${i.freelancerId} AND a.status <> 'WITHDRAWN')
+        -- bei mehreren Stellen nur die erste freie Stelle der Gruppe zeigen
+        AND (s."groupId" IS NULL OR NOT EXISTS (SELECT 1 FROM "MarketplaceShift" g WHERE g."groupId" = s."groupId" AND g.status = 'OPEN' AND g."slotIndex" < s."slotIndex"))
+        -- nicht zeigen, wenn man sich schon (irgendwo in der Gruppe) beworben hat bzw. dort zugesagt/abgesagt wurde
+        AND NOT EXISTS (SELECT 1 FROM "ShiftApplication" a JOIN "MarketplaceShift" g ON g.id = a."shiftId"
+                        WHERE a."freelancerId" = ${i.freelancerId} AND a.status <> 'WITHDRAWN'
+                          AND (g.id = s.id OR (s."groupId" IS NOT NULL AND g."groupId" = s."groupId")))
     ) t
     WHERE t."distanceKm" <= ${i.radiusKm}
     ORDER BY t."distanceKm", t."startTime"
@@ -65,6 +76,10 @@ export async function applyToShift(
   if (!shift) throw notFound('Schicht nicht gefunden');
   if (shift.status !== 'OPEN' || shift.startTime <= new Date()) throw conflict('Schicht nicht mehr offen');
   if (!freelancer.verifiedSkills.includes(shift.requiredSkill)) throw forbidden('Erforderliche Fähigkeit nicht verifiziert');
+  if (shift.groupId) { // mehrere Stellen: nur eine Bewerbung pro Ausschreibung
+    const dup = await prisma.shiftApplication.findFirst({ where: { freelancerId: freelancer.id, status: { not: 'WITHDRAWN' }, shift: { groupId: shift.groupId }, shiftId: { not: shiftId } } });
+    if (dup) throw conflict('Du hast dich für diese Ausschreibung bereits beworben');
+  }
   const existing = await prisma.shiftApplication.findUnique({ where: { shiftId_freelancerId: { shiftId, freelancerId: freelancer.id } } });
   if (!existing) { const a = await prisma.shiftApplication.create({ data: { shiftId, freelancerId: freelancer.id } }); notifyNewApplication(shiftId); return a; }
   if (existing.status === 'WITHDRAWN') { // erneut bewerben nach Zurückziehen
@@ -119,21 +134,29 @@ export async function acceptApplication(userId: string, shiftId: string, freelan
 
     const now = new Date();
     await tx.shiftApplication.update({ where: { id: app.id }, data: { status: 'ACCEPTED', decidedAt: now } });
-    await tx.shiftApplication.updateMany({
-      where: { shiftId, id: { not: app.id }, status: 'PENDING' },
-      data: { status: 'REJECTED', decidedAt: now },
-    });
+    // Übrige Bewerber: bei noch freien Stellen derselben Ausschreibung rücken sie nach, sonst „besetzt“
+    const waiting = await tx.shiftApplication.findMany({ where: { shiftId, id: { not: app.id }, status: 'PENDING' }, select: { id: true, freelancerId: true } });
+    const nextOpen = shift.groupId && waiting.length
+      ? await tx.marketplaceShift.findFirst({ where: { groupId: shift.groupId, status: 'OPEN', id: { not: shiftId }, startTime: { gt: now } }, orderBy: { slotIndex: 'asc' } }) : null;
+    let rejectedIds: string[] = [];
+    if (nextOpen) {
+      await tx.shiftApplication.deleteMany({ where: { shiftId: nextOpen.id, freelancerId: { in: waiting.map((w) => w.freelancerId) }, status: 'WITHDRAWN' } });
+      await tx.shiftApplication.updateMany({ where: { id: { in: waiting.map((w) => w.id) } }, data: { shiftId: nextOpen.id } });
+    } else {
+      await tx.shiftApplication.updateMany({ where: { id: { in: waiting.map((w) => w.id) } }, data: { status: 'REJECTED', decidedAt: now } });
+      rejectedIds = waiting.map((w) => w.freelancerId);
+    }
 
     const temp = await onShiftMatched(tx, { ...shift, status: 'MATCHED' }, freelancerId);
-    return { shiftId, status: 'MATCHED' as const, temporaryEmployeeId: temp.id };
+    return { shiftId, status: 'MATCHED' as const, temporaryEmployeeId: temp.id, rejectedIds };
   }, { isolationLevel: 'Serializable' });
   // Nach dem Commit: Webhook sofort zustellen (Fire-and-forget; bei Fehler übernimmt der Retry-Worker)
   void dispatchPendingWebhooks().catch(console.error);
   notifyAccepted(shiftId, freelancerId);
   notifySofortmeldungDue(shiftId);
-  const rejected = await prisma.shiftApplication.findMany({ where: { shiftId, status: 'REJECTED' }, select: { freelancerId: true } });
-  notifyNotSelected(shiftId, rejected.map((r) => r.freelancerId), 'FILLED');
-  return result;
+  notifyNotSelected(shiftId, result.rejectedIds, 'FILLED');
+  const { rejectedIds: _r, ...publicResult } = result;
+  return publicResult;
 }
 
 /**

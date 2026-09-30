@@ -33,7 +33,8 @@ async function unmatch(tx: Tx, shiftId: string, by: 'FREELANCER' | 'RESTAURANT',
   // Früher abgelehnte Bewerber sehen die frei gewordene Schicht wieder in der Suche (und werden informiert)
   let reoffered: string[] = [];
   if (opts.reopen) {
-    const others = await tx.shiftApplication.findMany({ where: { shiftId, status: 'REJECTED', freelancerId: { not: temp.freelancerId } }, select: { id: true, freelancerId: true } });
+    // bei mehreren Stellen zählen auch Ablehnungen an den anderen Stellen derselben Ausschreibung
+    const others = await tx.shiftApplication.findMany({ where: { shift: shift.groupId ? { groupId: shift.groupId } : { id: shiftId }, status: 'REJECTED', freelancerId: { not: temp.freelancerId } }, select: { id: true, freelancerId: true } });
     await tx.shiftApplication.updateMany({ where: { id: { in: others.map((o) => o.id) } }, data: { status: 'WITHDRAWN', decidedAt: opts.now } });
     reoffered = others.map((o) => o.freelancerId);
   }

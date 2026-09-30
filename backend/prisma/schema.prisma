@@ -99,6 +99,7 @@ model Restaurant {
   /// Gesperrte Betriebe können keine Schichten ausschreiben (Missbrauchsschutz, durch Verwaltung gesetzt)
   blockedAt DateTime?
   apiKeys   RestaurantApiKey[]
+  invitations TeamInvitation[]
 
   members        RestaurantMember[]
   shifts         MarketplaceShift[]
@@ -134,6 +135,10 @@ model MarketplaceShift {
   status        ShiftStatus @default(OPEN)
   /// Bewertung (1–5) der Aushilfe durch den Wirt beim Abschluss
   rating        Int?
+  /// Mehrere Personen gesucht: zusammengehörige Stellen teilen eine groupId; für Aushilfen erscheint nur die erste freie Stelle
+  groupId       String?
+  slotIndex     Int         @default(1)
+  slotCount     Int         @default(1)
   /// Optimistic-Locking-Zähler gegen Doppel-Zusagen
   version       Int         @default(0)
   createdById   String
@@ -147,6 +152,7 @@ model MarketplaceShift {
   @@index([status, latitude, longitude]) // Bounding-Box-Vorfilter der Umkreissuche
   @@index([restaurantId, status])
   @@index([startTime])
+  @@index([groupId])
 }
 
 model Freelancer {
@@ -352,4 +358,21 @@ model ShiftCancellation {
 
   @@index([shiftId])
   @@index([freelancerId, createdAt])
+}
+
+/// Einladung eines Mitarbeiters (Rolle Manager) in einen Betrieb. Der Token steht nur in der E-Mail; gespeichert wird sein Hash.
+model TeamInvitation {
+  id           String     @id @default(uuid())
+  restaurantId String
+  email        String
+  role         MemberRole @default(MANAGER)
+  tokenHash    String     @unique
+  invitedById  String
+  expiresAt    DateTime
+  acceptedAt   DateTime?
+  revokedAt    DateTime?
+  createdAt    DateTime   @default(now())
+  restaurant   Restaurant @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+
+  @@index([restaurantId])
 }

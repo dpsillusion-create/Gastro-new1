@@ -3,6 +3,8 @@
 const API = '/api/v1';
 const $ = (id) => document.getElementById(id);
 const store = {
+  getInvite: () => { try { return sessionStorage.getItem('ss_invite'); } catch { return null; } },
+  setInvite: (t) => { try { t ? sessionStorage.setItem('ss_invite', t) : sessionStorage.removeItem('ss_invite'); } catch { /* ignorieren */ } },
   get: () => { try { return sessionStorage.getItem('ss_token'); } catch { return null; } },
   set: (t) => { try { t ? sessionStorage.setItem('ss_token', t) : sessionStorage.removeItem('ss_token'); } catch { /* ignorieren */ } },
 };
@@ -55,7 +57,7 @@ function tab(login) {
 }
 const formData = (form) => Object.fromEntries(new FormData(form));
 
-function openAuth(login) { view('auth'); tab(login); }
+function openAuth(login) { view('auth'); tab(login); applyInviteMode(!!state.invite); }
 $('goLogin').onclick = () => openAuth(true);
 $('goRegister').onclick = () => openAuth(false);
 $('ctaRegister').onclick = () => openAuth(false);
@@ -77,9 +79,39 @@ $('loginForm').addEventListener('submit', (e) => {
 });
 $('registerForm').addEventListener('submit', (e) => {
   e.preventDefault();
-  busy(e.submitter, async () => { const fd = new FormData(e.target); const r = await api('/auth/register', { method: 'POST', body: { ...Object.fromEntries(fd), acceptTerms: fd.has('acceptTerms') } }); openVerify('signup', r.verificationToken); });
+  busy(e.submitter, async () => {
+    const fd = new FormData(e.target);
+    const r = state.invite
+      ? await api('/auth/register-invited', { method: 'POST', body: { token: state.invite.token, phone: fd.get('phone'), password: fd.get('password'), acceptTerms: fd.has('acceptTerms') } })
+      : await api('/auth/register', { method: 'POST', body: { ...Object.fromEntries(fd), acceptTerms: fd.has('acceptTerms') } });
+    if (state.invite) { store.setInvite(null); state.invite = null; }
+    openVerify('signup', r.verificationToken);
+  });
 });
 async function onSession(token) { store.set(token); await start(); }
+
+// ---- Einladung in einen Betrieb (Link ?invite=…) ----
+function applyInviteMode(on) {
+  const box = $('restaurantFields'); box.hidden = on;
+  box.querySelectorAll('input').forEach((i) => { i.disabled = on; });
+  const em = $('registerForm').elements.email; em.readOnly = on; if (on) em.value = state.invite.email;
+  $('registerHint').textContent = on ? `Einladung von „${state.invite.restaurantName}“: Legen Sie Ihr Konto an, um den Betrieb mitzuverwalten.` : 'Schichten in Ihrem Umkreis (max. 25 km) an verifizierte Aushilfen ausschreiben.';
+}
+async function loadInvite() {
+  const t = new URLSearchParams(location.search).get('invite') || store.getInvite();
+  if (!t) return;
+  history.replaceState(null, '', location.pathname);
+  try {
+    const info = await api('/auth/invitation/' + encodeURIComponent(t));
+    state.invite = { token: t, ...info }; store.setInvite(t);
+  } catch { store.setInvite(null); show('Diese Einladung ist ungültig oder abgelaufen.'); }
+}
+async function acceptPendingInvite() {
+  if (!state.invite || !store.get()) return false;
+  try { await api('/auth/invitation/accept', { method: 'POST', body: { token: state.invite.token } }); show(`Willkommen im Team von „${state.invite.restaurantName}“!`, true); }
+  catch (e) { show(e.message); }
+  store.setInvite(null); state.invite = null; return true;
+}
 
 // ---- Bestätigungscodes (Registrierung) bzw. zweiter Faktor (Anmeldung) ----
 const pending = { mode: null, token: null };
@@ -136,12 +168,12 @@ $('shiftForm').addEventListener('submit', (e) => {
   busy(e.submitter, async () => {
     await api('/marketplace/shifts', { method: 'POST', body: {
       restaurantId: state.restaurantId, role: f.role, requiredSkill: skill,
-      hourlyRateCents: Math.round(parseFloat(f.rate) * 100),
+      hourlyRateCents: Math.round(parseFloat(f.rate) * 100), positions: parseInt(f.positions, 10) || 1,
       startTime: new Date(f.start).toISOString(), endTime: new Date(f.end).toISOString(),
       ...(f.requirements.trim() ? { requirements: f.requirements.trim() } : {}),
       ...(f.activityKey.trim() ? { activityKey: f.activityKey.trim() } : {}),
     } });
-    e.target.reset(); e.target.elements.rate.value = '19';
+    e.target.reset(); e.target.elements.rate.value = '19'; e.target.elements.positions.value = '1';
     show('Schicht veröffentlicht – passende Aushilfen im Umkreis sehen sie jetzt.', true);
     await loadShifts();
   });
@@ -236,14 +268,14 @@ function matchedControls(s) {
 function card(s) {
   const c = el('article', { class: 'shift' },
     el('header', {},
-      el('div', {}, el('h3', {}, `${s.role} · ${euro(s.hourlyRateCents)}/Std.`),
+      el('div', {}, el('h3', {}, `${s.role} · ${euro(s.hourlyRateCents)}/Std.${s.slotCount > 1 ? ` · Stelle ${s.slotIndex} von ${s.slotCount}` : ''}`),
         el('div', { class: 'meta' }, `${fmt(s.startTime)} – ${fmt(s.endTime)}${s.requirements ? ' · ' + s.requirements : ''}`)),
       el('span', { class: 'pill ' + s.status }, STATUS[s.status] || s.status)));
   if (s.status === 'OPEN') {
     const box = el('div', { class: 'applicants' });
     box.append(el('span', { class: 'meta' }, s.pendingApplications ? 'Bewerber werden geladen …' : 'Noch keine Bewerbungen – Aushilfen im Umkreis sind benachrichtigt.'));
     if (s.pendingApplications) renderApplicants(box, s).catch((e) => show(e.message));
-    c.append(box, el('div', { class: 'actions' }, el('button', { class: 'secondary', onclick: (ev) => busy(ev.target, async () => {
+    c.append(box, state.role !== 'OWNER' ? '' : el('div', { class: 'actions' }, el('button', { class: 'secondary', onclick: (ev) => busy(ev.target, async () => {
       if (!confirm('Schicht wirklich zurückziehen?')) return;
       await api(`/marketplace/shifts/${s.id}/cancel`, { method: 'POST' }); await loadShifts();
     }) }, 'Zurückziehen')));
@@ -261,20 +293,38 @@ async function loadShifts() {
 }
 
 // ---- Start ----
-const state = { restaurantId: null, isAdmin: false };
+const state = { restaurantId: null, isAdmin: false, role: 'OWNER', invite: null };
 async function start() {
-  if (!store.get()) return view('landing');
+  if (!store.get()) { if (state.invite) return openAuth(false); return view('landing'); }
+  await acceptPendingInvite();
   const me = await api('/auth/me');
   state.isAdmin = !!me.isAdmin;
-  const r = me.restaurants.find((x) => x.role === 'OWNER');
+  const r = me.restaurants.find((x) => x.role === 'OWNER') || me.restaurants.find((x) => x.role === 'MANAGER');
   if (!r && !me.isAdmin) { logout(); show('Für dieses Konto ist kein Betrieb hinterlegt.'); return; }
-  state.restaurantId = r ? r.id : null;
+  state.restaurantId = r ? r.id : null; state.role = r ? r.role : 'OWNER';
   $('restaurantName').textContent = r ? `${r.name} · ${me.email}` : me.email;
   if (!r) return openAdmin();
   view('dash');
+  const owner = state.role === 'OWNER';
+  // Manager verwalten Bewerber, Anwesenheit und Bewertungen; Ausschreiben, Team und Schnittstelle bleiben dem Inhaber vorbehalten
+  $('shiftForm').closest('.card').hidden = !owner; $('integrations').hidden = !owner; $('team').hidden = !owner;
   TotpUI.mount($('security'), { api, show, enabled: me.totpEnabled, onChange: () => start() });
-  renderIntegrations();
+  if (owner) { renderIntegrations(); renderTeam(); }
   await loadShifts();
+}
+
+// ---- Team: Manager einladen (nur Inhaber) ----
+async function renderTeam() {
+  const box = $('team'), base = `/restaurants/${state.restaurantId}/team`;
+  const t = await api(base);
+  box.replaceChildren(el('h2', {}, 'Team'), el('p', { class: 'hint' }, 'Manager können Bewerber bestätigen, die Anwesenheit melden und bewerten. Schichten ausschreiben und Einstellungen bleiben beim Inhaber.'));
+  for (const m of t.members) box.append(el('div', { class: 'applicant' }, el('div', {}, el('strong', {}, m.email), el('div', { class: 'meta' }, m.role === 'OWNER' ? 'Inhaber' : 'Manager')),
+    m.role === 'MANAGER' ? el('button', { class: 'secondary', onclick: (ev) => busy(ev.target, async () => { if (!confirm(`${m.email} aus dem Team entfernen?`)) throw new Error('Abgebrochen'); await api(`${base}/members/${m.userId}`, { method: 'DELETE' }); await renderTeam(); }) }, 'Entfernen') : ''));
+  for (const i of t.invitations) box.append(el('div', { class: 'applicant' }, el('div', {}, el('strong', {}, i.email), el('div', { class: 'meta' }, `eingeladen · gültig bis ${new Date(i.expiresAt).toLocaleDateString('de-DE')}`)),
+    el('button', { class: 'secondary', onclick: (ev) => busy(ev.target, async () => { await api(`${base}/invitations/${i.id}`, { method: 'DELETE' }); await renderTeam(); }) }, 'Widerrufen')));
+  const form = el('form', { class: 'row-gap' }, el('input', { name: 'email', type: 'email', placeholder: 'E-Mail-Adresse der Person', required: '' }), el('button', { class: 'btn ghost' }, 'Als Manager einladen'));
+  form.addEventListener('submit', (e) => { e.preventDefault(); busy(e.submitter, async () => { await api(`${base}/invitations`, { method: 'POST', body: { email: form.elements.email.value } }); show('Einladung per E-Mail verschickt.', true); await renderTeam(); }); });
+  box.append(form);
 }
 
 // ---- API-Schlüssel für Zeiterfassungsterminal / Dienstplan-System ----
@@ -365,4 +415,4 @@ async function loadAdmin(tabName) {
   }
 }
 
-start().catch((e) => { logout(); show(e.message); });
+loadInvite().then(() => start()).catch((e) => { logout(); show(e.message); });

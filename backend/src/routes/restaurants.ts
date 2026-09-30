@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { prisma } from '../db';
 import { notFound } from '../errors';
 import { assertRestaurantOwner, authenticate } from '../middleware/auth';
+import { inviteManager } from '../services/team';
 
 /** API-Schlüssel eines Betriebs (für Zeiterfassungsterminal/Dienstplan-System). Nur der Inhaber verwaltet sie. */
 export const restaurantRouter = Router();
@@ -34,6 +35,42 @@ restaurantRouter.delete('/:id/api-keys/:keyId', async (req, res, next) => {
     const id = idParam.parse(req.params.id); await assertRestaurantOwner(req.userId!, id);
     const r = await prisma.restaurantApiKey.updateMany({ where: { id: idParam.parse(req.params.keyId), restaurantId: id, revokedAt: null }, data: { revokedAt: new Date() } });
     if (r.count !== 1) throw notFound('Schlüssel nicht gefunden');
+    res.status(204).end();
+  } catch (e) { next(e); }
+});
+
+// ---- Team (Manager einladen) – nur der Inhaber ----
+restaurantRouter.get('/:id/team', async (req, res, next) => {
+  try {
+    const id = idParam.parse(req.params.id); await assertRestaurantOwner(req.userId!, id);
+    const [members, invitations] = await Promise.all([
+      prisma.restaurantMember.findMany({ where: { restaurantId: id }, include: { user: { select: { email: true } } }, orderBy: { role: 'asc' } }),
+      prisma.teamInvitation.findMany({ where: { restaurantId: id, acceptedAt: null, revokedAt: null, expiresAt: { gt: new Date() } }, orderBy: { createdAt: 'desc' }, select: { id: true, email: true, createdAt: true, expiresAt: true } }),
+    ]);
+    res.json({ members: members.map((m) => ({ userId: m.userId, email: m.user.email, role: m.role })), invitations });
+  } catch (e) { next(e); }
+});
+restaurantRouter.post('/:id/team/invitations', async (req, res, next) => {
+  try {
+    const id = idParam.parse(req.params.id); await assertRestaurantOwner(req.userId!, id);
+    const { email } = z.object({ email: z.string().trim().toLowerCase().email('Ungültige E-Mail-Adresse').max(200) }).strict().parse(req.body);
+    res.status(201).json(await inviteManager(req.userId!, id, email));
+  } catch (e) { next(e); }
+});
+restaurantRouter.delete('/:id/team/invitations/:invId', async (req, res, next) => {
+  try {
+    const id = idParam.parse(req.params.id); await assertRestaurantOwner(req.userId!, id);
+    const r = await prisma.teamInvitation.updateMany({ where: { id: idParam.parse(req.params.invId), restaurantId: id, acceptedAt: null, revokedAt: null }, data: { revokedAt: new Date() } });
+    if (r.count !== 1) throw notFound('Einladung nicht gefunden');
+    res.status(204).end();
+  } catch (e) { next(e); }
+});
+/** Manager aus dem Team entfernen (der Inhaber selbst kann nicht entfernt werden). */
+restaurantRouter.delete('/:id/team/members/:userId', async (req, res, next) => {
+  try {
+    const id = idParam.parse(req.params.id); await assertRestaurantOwner(req.userId!, id);
+    const r = await prisma.restaurantMember.deleteMany({ where: { restaurantId: id, userId: idParam.parse(req.params.userId), role: 'MANAGER' } });
+    if (r.count !== 1) throw notFound('Mitglied nicht gefunden');
     res.status(204).end();
   } catch (e) { next(e); }
 });

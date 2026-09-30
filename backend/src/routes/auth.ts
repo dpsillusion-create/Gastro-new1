@@ -4,13 +4,14 @@ import { z } from 'zod';
 import { TERMS_VERSION } from '../config';
 import { prisma } from '../db';
 import QRCode from 'qrcode';
-import { badRequest, conflict, HttpError, unauthorized } from '../errors';
+import { badRequest, conflict, forbidden, HttpError, notFound, unauthorized } from '../errors';
 import { authenticate } from '../middleware/auth';
 import { geocodeAddress } from '../services/geocode';
 import { decrypt, encrypt } from '../services/crypto';
 import { checkCode, issueCode, pendingToken, readPendingToken, sessionToken, startSignupVerification } from '../services/otp';
 import { hashPassword, verifyPassword } from '../services/password';
 import { normalizePhone } from '../services/phone';
+import { findValidInvitation } from '../services/team';
 import { generateSecret, otpauthUri, verifyTotp } from '../services/totp';
 
 export const authRouter = Router();
@@ -140,6 +141,47 @@ authRouter.post('/login/verify', strict, async (req, res, next) => {
     const ok = (await checkTotp(userId, b.code)) || (await checkCode(userId, 'LOGIN', 'EMAIL', b.code));
     if (!ok) throw badRequest('Code falsch oder abgelaufen');
     res.json({ token: sessionToken(userId) });
+  } catch (err) { next(err); }
+});
+
+// ---- Einladung in einen Betrieb ----
+/** Zeigt zu einem Einladungslink Betrieb und eingeladene Adresse (für das Vorbelegen der Registrierung). */
+authRouter.get('/invitation/:token', strict, async (req, res, next) => {
+  try { const inv = await findValidInvitation(z.string().min(20).max(80).parse(req.params.token)); res.json({ restaurantName: inv.restaurant.name, email: inv.email }); } catch (e) { next(e); }
+});
+/** Registrierung als eingeladener Manager: kein eigener Betrieb, E-Mail kommt aus der Einladung (wird per Code bestätigt). */
+authRouter.post('/register-invited', strict, async (req, res, next) => {
+  try {
+    const b = z.object({
+      token: z.string().min(20).max(80), phone: phoneField, password: z.string().min(10, 'Passwort: mindestens 10 Zeichen').max(128),
+      acceptTerms: z.literal(true, { errorMap: () => ({ message: 'Bitte Nutzungsbedingungen und Datenschutz akzeptieren' }) }),
+    }).strict().parse(req.body);
+    const inv = await findValidInvitation(b.token);
+    if (await prisma.user.findUnique({ where: { email: inv.email }, select: { id: true } })) throw conflict('Für diese E-Mail-Adresse gibt es schon ein Konto – bitte melde dich an, um die Einladung anzunehmen');
+    const user = await prisma.$transaction(async (tx) => {
+      const claim = await tx.teamInvitation.updateMany({ where: { id: inv.id, acceptedAt: null, revokedAt: null }, data: { acceptedAt: new Date() } });
+      if (claim.count !== 1) throw notFound('Einladung ungültig oder abgelaufen');
+      return tx.user.create({ data: { email: inv.email, phone: b.phone, passwordHash: await hashPassword(b.password), termsAcceptedAt: new Date(), termsVersion: TERMS_VERSION,
+        memberships: { create: { role: inv.role, restaurantId: inv.restaurantId } } } });
+    });
+    res.status(201).json({ verificationToken: await startSignupVerification(user) });
+  } catch (err) {
+    if ((err as { code?: string })?.code === 'P2002') return next(conflict('Für diese E-Mail-Adresse gibt es schon ein Konto'));
+    next(err);
+  }
+});
+/** Bestehendes Konto nimmt eine Einladung an (die E-Mail-Adresse des Kontos muss zur Einladung passen). */
+authRouter.post('/invitation/accept', authenticate, strict, async (req, res, next) => {
+  try {
+    const { token } = z.object({ token: z.string().min(20).max(80) }).strict().parse(req.body);
+    const inv = await findValidInvitation(token);
+    const user = await prisma.user.findUniqueOrThrow({ where: { id: req.userId! }, select: { email: true } });
+    if (user.email !== inv.email) throw forbidden('Diese Einladung gilt für eine andere E-Mail-Adresse');
+    await prisma.$transaction([
+      prisma.restaurantMember.upsert({ where: { userId_restaurantId: { userId: req.userId!, restaurantId: inv.restaurantId } }, create: { userId: req.userId!, restaurantId: inv.restaurantId, role: inv.role }, update: {} }),
+      prisma.teamInvitation.update({ where: { id: inv.id }, data: { acceptedAt: new Date() } }),
+    ]);
+    res.status(204).end();
   } catch (err) { next(err); }
 });
 

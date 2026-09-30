@@ -162,7 +162,7 @@ function shiftCard(s, top) {
   const c = el('div', { class: 'swipe' + (top ? '' : ' next') },
     el('span', { class: 'pill dist' }, `${Number(s.distanceKm).toLocaleString('de-DE', { maximumFractionDigits: 1 })} km`),
     el('div', { class: 'stampyes' }, 'INTERESSE'), el('div', { class: 'stampno' }, 'NEIN'),
-    el('div', { class: 'role' }, s.role), el('div', { class: 'where' }, `${s.restaurantName} · ${s.city}`),
+    el('div', { class: 'role' }, s.role), el('div', { class: 'where' }, `${s.restaurantName} · ${s.city}${s.openSlots > 1 ? ` · ${s.openSlots} Plätze frei` : ''}`),
     el('div', { class: 'rate' }, `${euro(s.hourlyRateCents)}/Std.`),
     el('div', { class: 'est' }, `≈ ${euro(Math.round(hours * s.hourlyRateCents))} brutto für ${hours.toLocaleString('de-DE', { maximumFractionDigits: 1 })} Std.`),
     el('div', { class: 'when' }, `${fmtTime(s.startTime)} – ${new Date(s.endTime).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })} Uhr`),

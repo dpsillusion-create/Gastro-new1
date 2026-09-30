@@ -24,6 +24,7 @@ const createSchema = z.object({
   requiredSkill: Skill,
   requirements: z.string().trim().max(500).optional(),
   activityKey: z.string().regex(/^\d{9}$/, 'activityKey: 9 Ziffern').optional(),
+  positions: z.number().int().min(1).max(10).default(1),
   hourlyRateCents: z.number().int(`hourlyRateCents muss eine ganze Zahl in Cent sein`)
     .min(MIN_WAGE_CENTS, `Stundensatz unter dem Mindestlohn (${(MIN_WAGE_CENTS / 100).toFixed(2).replace('.', ',')} €/h)`)
     .max(20000, 'Stundensatz unplausibel hoch'),
@@ -124,7 +125,7 @@ marketplaceRouter.get('/my-shifts', async (req, res, next) => {
       orderBy: { startTime: 'desc' }, take: 100,
       select: {
         id: true, role: true, requiredSkill: true, requirements: true, hourlyRateCents: true, startTime: true,
-        endTime: true, status: true, rating: true, restaurant: { select: { id: true, name: true } },
+        endTime: true, status: true, rating: true, slotIndex: true, slotCount: true, restaurant: { select: { id: true, name: true } },
         _count: { select: { applications: { where: { status: 'PENDING' } } } },
         assignment: { select: {
           clockedInAt: true, noShowRecordedAt: true, freelancer: { select: { displayName: true } },

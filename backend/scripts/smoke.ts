@@ -30,6 +30,17 @@ async function mailSent(to: string, subjectPart: string, bodyPart?: string) {
   return false;
 }
 
+/** Liest den Einladungs-Token aus der (im Protokoll-Modus „verschickten“) Einladungs-E-Mail. */
+async function inviteToken(to: string): Promise<string | null> {
+  for (let i = 0; i < 15; i++) {
+    let log = localMails.join('\n'); try { log += '\n' + readFileSync(process.env.SERVER_LOG ?? '/tmp/srv.log', 'utf8'); } catch { /* ignorieren */ }
+    const hits = log.split('[NOTIFY_MODE=log]').filter((m) => m.includes(`EMAIL an ${to} [Einladung`)).map((m) => m.match(/invite=([A-Za-z0-9_-]+)/)?.[1]).filter(Boolean);
+    if (hits.length) return hits[hits.length - 1]!;
+    await new Promise((r) => setTimeout(r, 200));
+  }
+  return null;
+}
+
 async function api(method: string, path: string, user: string | null, body?: unknown) {
   const res = await fetch(BASE + path, {
     method,
@@ -422,6 +433,82 @@ async function main() {
   check('Betrieb sagt Schicht komplett ab → CANCELLED', cm2.status === 200 && (await shiftRow(shD2)).status === 'CANCELLED', cm2);
   check('zweites Zurücknehmen → 404/409', [404, 409].includes((await cm(shD2, owner!.id, { reopen: true })).status));
   check('Absagen des Betriebs sind protokolliert', (await prisma.shiftCancellation.count({ where: { cancelledBy: 'RESTAURANT' } })) === 2);
+
+  console.log('— Mehrere Personen pro Schicht');
+  const fm1 = await mkF('slot-a'), fm2 = await mkF('slot-b'), fm3 = await mkF('slot-c'), fm4 = await mkF('slot-d');
+  const win = { startTime: new Date(Date.now() + 40 * 3600_000).toISOString(), endTime: new Date(Date.now() + 48 * 3600_000).toISOString() };
+  check('0 oder 11 Personen → 400', (await api('POST', '/api/v1/marketplace/shifts', owner!.id, { ...good, ...win, positions: 0 })).status === 400 && (await api('POST', '/api/v1/marketplace/shifts', owner!.id, { ...good, ...win, positions: 11 })).status === 400);
+  const grp = await api('POST', '/api/v1/marketplace/shifts', owner!.id, { ...good, ...win, positions: 2 });
+  check('2 Personen → 201 mit zwei Stellen', grp.status === 201 && grp.json.shiftIds?.length === 2 && grp.json.slotCount === 2, grp);
+  const [g1, g2] = grp.json.shiftIds as string[];
+  const view = async (f: { userId: string }) => ((await api('GET', '/api/v1/marketplace/search', f.userId)).json.shifts as Array<{ id: string; openSlots: number; slotCount: number }>).filter((x) => x.id === g1 || x.id === g2);
+  const v1 = await view(fm1);
+  check('Aushilfen sehen die Ausschreibung nur einmal, mit „2 Plätze frei“', v1.length === 1 && v1[0]!.id === g1 && v1[0]!.openSlots === 2 && v1[0]!.slotCount === 2, v1);
+  const applyTo = (id: string, f: { userId: string }) => api('POST', `/api/v1/marketplace/shifts/${id}/apply`, f.userId);
+  check('Bewerbung von Person A → 201', (await applyTo(g1!, fm1)).status === 201);
+  check('danach sieht A die Ausschreibung nicht mehr', (await view(fm1)).length === 0);
+  check('A auf die andere Stelle derselben Ausschreibung → 409', (await applyTo(g2!, fm1)).status === 409);
+  await applyTo(g1!, fm2); await applyTo(g1!, fm3);
+  const accG = (id: string, f: { id: string }) => api('POST', `/api/v1/marketplace/shifts/${id}/accept`, owner!.id, { freelancerId: f.id });
+  check('Wirt bestätigt A für Stelle 1 → 200', (await accG(g1!, fm1)).status === 200);
+  const apps = await prisma.shiftApplication.findMany({ where: { freelancerId: { in: [fm2.id, fm3.id] }, shiftId: { in: [g1!, g2!] } } });
+  check('die anderen Bewerber rücken auf Stelle 2 nach (weiter „wartend“)', apps.length === 2 && apps.every((a) => a.shiftId === g2 && a.status === 'PENDING'), apps.map((a) => [a.shiftId === g2, a.status]));
+  const v4 = await view(fm4);
+  check('Andere sehen jetzt „noch 1 Platz“ (Stelle 2)', v4.length === 1 && v4[0]!.id === g2 && v4[0]!.openSlots === 1, v4);
+  const mineG = (await api('GET', '/api/v1/marketplace/my-shifts', owner!.id)).json.filter((x: { id: string }) => x.id === g1 || x.id === g2);
+  check('Wirt sieht beide Stellen mit „Stelle x von 2“ und die Bewerber an Stelle 2', mineG.length === 2 && mineG.every((x: { slotCount: number }) => x.slotCount === 2) && mineG.find((x: { id: string }) => x.id === g2)?.pendingApplications === 2, mineG.map((x: { slotIndex: number; pendingApplications: number }) => [x.slotIndex, x.pendingApplications]));
+  check('Wirt bestätigt B für Stelle 2 → 200', (await accG(g2!, fm2)).status === 200);
+  check('C wird abgelehnt und per E-Mail informiert', (await prisma.shiftApplication.findFirstOrThrow({ where: { shiftId: g2, freelancerId: fm3.id } })).status === 'REJECTED' && await mailSent('slot-c@smoketest.invalid', 'Schicht besetzt'));
+  check('Ausschreibung ist voll – nicht mehr in der Suche', (await view(fm4)).length === 0);
+  check('A sagt rechtzeitig ab → Stelle 1 wieder frei', (await cancelA(g1!, fm1.userId)).status === 200);
+  const v3 = await view(fm3);
+  check('C (früher abgelehnt) sieht die freie Stelle wieder', v3.length === 1 && v3[0]!.id === g1 && v3[0]!.openSlots === 1, v3);
+
+  console.log('— Team: Manager einladen');
+  const team = (user: string) => api('GET', `/api/v1/restaurants/${rid}/team`, user);
+  const invite = (user: string, email: string) => api('POST', `/api/v1/restaurants/${rid}/team/invitations`, user, { email });
+  check('Team ansehen: Fremde → 403, Manager → 403', (await team(stranger!.id)).status === 403 && (await team(manager!.id)).status === 403);
+  check('Einladen durch Manager (nicht Inhaber) → 403', (await invite(manager!.id, 'neuer.manager@smoketest.invalid')).status === 403);
+  check('ungültige E-Mail → 400', (await invite(owner!.id, 'keine-mail')).status === 400);
+  check('Person, die schon im Team ist → 409', (await invite(owner!.id, 'manager@smoketest.invalid')).status === 409);
+  const inv1 = await invite(owner!.id, 'neuer.manager@smoketest.invalid');
+  check('Inhaber lädt ein → 201', inv1.status === 201, inv1);
+  check('zweite Einladung an dieselbe Adresse → 409', (await invite(owner!.id, 'neuer.manager@smoketest.invalid')).status === 409);
+  const tok = await inviteToken('neuer.manager@smoketest.invalid');
+  check('Einladungs-E-Mail mit Link ist rausgegangen', !!tok, tok);
+  check('Token liegt nur als Hash in der Datenbank', !JSON.stringify(await prisma.teamInvitation.findMany()).includes(tok!));
+  check('Einladung ansehen (ohne Login): Betrieb und Adresse', (await api('GET', `/api/v1/auth/invitation/${tok}`, null)).json?.email === 'neuer.manager@smoketest.invalid');
+  check('ungültiger Token → 404', (await api('GET', '/api/v1/auth/invitation/' + 'x'.repeat(30), null)).status === 404);
+  const ri = (b: Record<string, unknown>) => api('POST', '/api/v1/auth/register-invited', null, { token: tok, phone: '0171 7000001', password: 'ein-langes-passwort', acceptTerms: true, ...b });
+  check('Registrierung ohne Zustimmung → 400', (await ri({ acceptTerms: false })).status === 400);
+  const rinv = await ri({});
+  check('Registrierung mit Einladung → 201, noch keine Sitzung', rinv.status === 201 && !!rinv.json.verificationToken && !rinv.json.token, rinv);
+  check('Einladung ist damit verbraucht', (await api('GET', `/api/v1/auth/invitation/${tok}`, null)).status === 404);
+  const vinv = await api('POST', '/api/v1/auth/verify', null, { verificationToken: rinv.json.verificationToken, emailCode: CODE });
+  check('E-Mail-Code → Sitzung', vinv.status === 200 && !!vinv.json.token, vinv);
+  const mgr = async (m: string, p: string, b?: unknown) => { const r = await fetch(BASE + p, { method: m, headers: { 'content-type': 'application/json', authorization: `Bearer ${vinv.json.token}` }, body: b ? JSON.stringify(b) : undefined }); const t = await r.text(); return { status: r.status, json: t ? JSON.parse(t) : null }; };
+  const mme = await mgr('GET', '/api/v1/auth/me');
+  check('Neuer Nutzer ist Manager des Betriebs (ohne eigenen Betrieb)', mme.json?.restaurants?.length === 1 && mme.json.restaurants[0].role === 'MANAGER' && mme.json.restaurants[0].id === rid, mme.json);
+  check('Manager sieht die Schichten des Betriebs', (await mgr('GET', '/api/v1/marketplace/my-shifts')).json?.length > 0);
+  check('Manager darf KEINE Schicht ausschreiben → 403', (await mgr('POST', '/api/v1/marketplace/shifts', { ...good, restaurantId: rid })).status === 403);
+  check('Manager darf keine API-Schlüssel verwalten → 403', (await mgr('GET', `/api/v1/restaurants/${rid}/api-keys`)).status === 403);
+  const tm = await team(owner!.id);
+  check('Team-Liste zeigt Inhaber, Manager und keine offenen Einladungen', tm.json?.members?.some((m: { email: string; role: string }) => m.email === 'neuer.manager@smoketest.invalid' && m.role === 'MANAGER') && tm.json.invitations.length === 0, tm.json);
+  // bestehendes Konto nimmt Einladung an
+  await invite(owner!.id, 'stranger@smoketest.invalid');
+  const tok2 = await inviteToken('stranger@smoketest.invalid');
+  check('bestehende Adresse kann sich nicht „neu“ registrieren → 409', (await api('POST', '/api/v1/auth/register-invited', null, { token: tok2, phone: '0171 7000002', password: 'ein-langes-passwort', acceptTerms: true })).status === 409);
+  check('Annehmen mit fremdem Konto → 403', (await api('POST', '/api/v1/auth/invitation/accept', owner!.id, { token: tok2 })).status === 403);
+  check('Annehmen mit dem eingeladenen Konto → 204', (await api('POST', '/api/v1/auth/invitation/accept', stranger!.id, { token: tok2 })).status === 204);
+  check('Konto ist jetzt Manager des Betriebs', (await api('GET', '/api/v1/auth/me', stranger!.id)).json?.restaurants?.[0]?.role === 'MANAGER');
+  // widerrufen und entfernen
+  await invite(owner!.id, 'widerruf@smoketest.invalid');
+  const pend = (await team(owner!.id)).json.invitations[0];
+  check('Einladung widerrufen → 204, Link ungültig', (await api('DELETE', `/api/v1/restaurants/${rid}/team/invitations/${pend.id}`, owner!.id)).status === 204 && (await api('GET', `/api/v1/auth/invitation/${await inviteToken('widerruf@smoketest.invalid')}`, null)).status === 404);
+  const newMgrId = (await prisma.user.findUniqueOrThrow({ where: { email: 'neuer.manager@smoketest.invalid' } })).id;
+  check('Manager entfernen → 204', (await api('DELETE', `/api/v1/restaurants/${rid}/team/members/${newMgrId}`, owner!.id)).status === 204);
+  check('Entfernter Manager sieht den Betrieb nicht mehr', (await mgr('GET', '/api/v1/auth/me')).json?.restaurants?.length === 0);
+  check('Der Inhaber kann nicht entfernt werden → 404', (await api('DELETE', `/api/v1/restaurants/${rid}/team/members/${owner!.id}`, owner!.id)).status === 404);
 
   console.log('— Verwaltung');
   const admin = await prisma.user.create({ data: { email: 'admin@smoketest.invalid', emailVerifiedAt: new Date(), isAdmin: true } });
