@@ -110,7 +110,7 @@
             <small>Wird für die gesetzliche Sofortmeldung der Aushilfen benötigt.</small></label>
           <label>E-Mail<input name="email" type="email" autocomplete="username" required></label>
           <label>Handynummer<input name="phone" type="tel" inputmode="tel" autocomplete="tel" placeholder="0171 1234567" required>
-            <small>Wir senden dir einen Bestätigungscode per SMS. Die Nummer wird auch für die sichere Anmeldung genutzt.</small></label>
+            <small>Für Rückfragen zu deinem Konto. Sie wird nicht per SMS geprüft.</small></label>
           <label>Passwort (mind. 10 Zeichen)<input name="password" type="password" minlength="10" autocomplete="new-password" required></label>
           <button class="btn accent block">Kostenlos registrieren</button>
         </form>
@@ -125,12 +125,10 @@
         <p class="hint" id="verifyText"></p>
         <form id="verifyForm" class="form">
           <label id="emailCodeRow">Code aus der E-Mail<input name="emailCode" inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="\d{6}"></label>
-          <label id="phoneCodeRow">Code per SMS<input name="phoneCode" inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="\d{6}"></label>
           <label id="loginCodeRow">6-stelliger Code<input name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="\d{6}"></label>
           <button class="btn accent block">Bestätigen</button>
         </form>
         <div class="row-gap links">
-          <button id="resendSms" class="link" type="button">Code per SMS erneut senden</button>
           <button id="resendMail" class="link" type="button">Code per E-Mail senden</button>
         </div>
       </div>
@@ -142,6 +140,8 @@
         <span class="eyebrow"><i></i>Ihr Bereich</span>
         <h1 class="h-md">Schichten <em>verwalten</em></h1>
       </div>
+
+      <section id="security" class="card"></section>
 
       <section class="card">
         <h2>Schicht ausschreiben</h2>
@@ -181,6 +181,7 @@
     <a href="https://gastroevolution.de/impressum">Impressum</a>
     <a href="https://gastroevolution.de/datenschutz">Datenschutz</a>
   </footer>
+  <script src="totp-ui.js" defer></script>
   <script src="app.js" defer></script>
 </body>
 </html>

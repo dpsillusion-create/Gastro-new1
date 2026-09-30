@@ -63,9 +63,9 @@ $('loginForm').addEventListener('submit', (e) => {
   busy(e.submitter, async () => {
     try {
       const r = await api('/auth/login', { method: 'POST', body: f });
-      openVerify('login', r.challengeToken, r.phoneHint);
+      openVerify('login', r.challengeToken, r.twoFactor);
     } catch (err) {
-      if (err.body && err.body.error === 'NOT_VERIFIED') { openVerify('signup', err.body.verificationToken); show('Bitte bestätige zuerst E-Mail und Handynummer – wir haben dir neue Codes geschickt.', true); return; }
+      if (err.body && err.body.error === 'NOT_VERIFIED') { openVerify('signup', err.body.verificationToken); show('Bitte bestätige zuerst deine E-Mail-Adresse – wir haben dir einen neuen Code geschickt.', true); return; }
       throw err;
     }
   });
@@ -92,40 +92,31 @@ async function onSession(token) {
 
 // ---- Bestätigungscodes (Registrierung) bzw. zweiter Faktor (Anmeldung) ----
 const pending = { mode: null, token: null };
-function setVerifyRows(emailRow, phoneRow, loginRow) {
+function setVerifyRows(emailRow, loginRow) {
   const f = $('verifyForm').elements;
-  $('emailCodeRow').hidden = !emailRow; $('phoneCodeRow').hidden = !phoneRow; $('loginCodeRow').hidden = !loginRow;
-  f.emailCode.required = emailRow; f.phoneCode.required = phoneRow; f.code.required = loginRow;
+  $('emailCodeRow').hidden = !emailRow; $('loginCodeRow').hidden = !loginRow;
+  f.emailCode.required = emailRow; f.code.required = loginRow;
 }
-function openVerify(mode, token, hint) {
+function openVerify(mode, token, factor) {
   pending.mode = mode; pending.token = token; view('verify'); show('');
   const signup = mode === 'signup';
-  $('verifyForm').reset(); setVerifyRows(signup, signup, !signup);
-  $('verifyTitle').textContent = signup ? 'Konto bestätigen' : 'Sicherheitscode';
-  $('verifyText').textContent = signup
-    ? 'Wir haben dir einen Code per E-Mail und einen per SMS geschickt. Bitte gib beide ein.'
-    : `Zur Sicherheit haben wir dir einen Code per SMS geschickt${hint ? ' (' + hint + ')' : ''}.`;
-  $('resendMail').textContent = signup ? 'Code per E-Mail erneut senden' : 'Code stattdessen per E-Mail senden';
-  $('resendSms').textContent = 'Code per SMS erneut senden';
+  $('verifyForm').reset(); setVerifyRows(signup, !signup);
+  $('verifyTitle').textContent = signup ? 'E-Mail bestätigen' : 'Sicherheitscode';
+  $('verifyText').textContent = signup ? 'Wir haben dir einen Code per E-Mail geschickt. Bitte gib ihn hier ein.'
+    : factor === 'totp' ? 'Gib den 6-stelligen Code aus deiner Authenticator-App ein.' : 'Zur Sicherheit haben wir dir einen Code per E-Mail geschickt.';
+  $('resendMail').textContent = signup ? 'Code erneut senden' : factor === 'totp' ? 'Stattdessen Code per E-Mail senden' : 'Code erneut senden';
 }
 $('verifyForm').addEventListener('submit', (e) => {
   e.preventDefault(); const f = formData(e.target);
   busy(e.submitter, async () => {
-    try {
-      const r = pending.mode === 'signup'
-        ? await api('/auth/verify', { method: 'POST', body: { verificationToken: pending.token, ...(f.emailCode ? { emailCode: f.emailCode } : {}), ...(f.phoneCode ? { phoneCode: f.phoneCode } : {}) } })
-        : await api('/auth/login/verify', { method: 'POST', body: { challengeToken: pending.token, code: f.code } });
-      await onSession(r.token);
-    } catch (err) {
-      // schon bestätigte Codes ausblenden, damit nur noch der fehlende eingegeben werden muss
-      if (err.body && err.body.error === 'CODE_INVALID') setVerifyRows(!err.body.emailVerified, !err.body.phoneVerified, false);
-      throw err;
-    }
+    const r = pending.mode === 'signup'
+      ? await api('/auth/verify', { method: 'POST', body: { verificationToken: pending.token, emailCode: f.emailCode } })
+      : await api('/auth/login/verify', { method: 'POST', body: { challengeToken: pending.token, code: f.code } });
+    await onSession(r.token);
   });
 });
-const resend = (channel) => async () => { await api('/auth/resend', { method: 'POST', body: { token: pending.token, purpose: pending.mode, channel } }); show('Neuer Code wurde gesendet.', true); };
-$('resendSms').onclick = (e) => busy(e.target, resend('SMS'));
-$('resendMail').onclick = (e) => busy(e.target, resend('EMAIL'));
+const resend = async () => { await api('/auth/resend', { method: 'POST', body: { token: pending.token, purpose: pending.mode } }); show('Neuer Code wurde per E-Mail gesendet.', true); };
+$('resendMail').onclick = (e) => busy(e.target, resend);
 
 // ---- Hygienenachweis: Foto verkleinern (Handyfotos sind oft > 5 MB), PDF unverändert ----
 const readB64 = (blob) => new Promise((ok, fail) => { const r = new FileReader(); r.onload = () => ok(String(r.result).split(',')[1]); r.onerror = () => fail(new Error('Datei nicht lesbar')); r.readAsDataURL(blob); });
@@ -288,6 +279,7 @@ function renderProfile() {
   if (!p.hygiene) form.hidden = false;
   else box.append(el('div', { class: 'actions' }, el('button', { class: 'link', type: 'button', onclick: () => { form.hidden = !form.hidden; } }, 'Neuen Nachweis hochladen')));
   box.append(form);
+  TotpUI.mount($('security'), { api, show, enabled: p.totpEnabled, onChange: async () => { state.me = await api('/freelancers/me'); renderProfile(); } });
 }
 function setBanner() {
   const p = state.me, b = $('banner'); b.className = 'banner'; b.hidden = false;

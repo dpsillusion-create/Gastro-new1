@@ -14,7 +14,7 @@ import { saveHygieneCertificate } from '../services/hygiene';
 import { liftExpiredSuspension } from '../services/reliability';
 
 export const freelancerRouter = Router();
-const TAKEN = 'E-Mail-Adresse oder Handynummer ist bereits registriert';
+const TAKEN = 'Diese E-Mail-Adresse ist bereits registriert';
 const Skill = z.enum(['BAR', 'SERVICE', 'KITCHEN', 'DISHWASHING']);
 
 const registerSchema = z.object({
@@ -42,7 +42,7 @@ freelancerRouter.post('/register', rateLimit({ windowMs: 15 * 60_000, limit: 20 
     if (!validateSocialSecurityNumber(b.socialSecurityNumber, b.birthDate))
       throw badRequest('Sozialversicherungsnummer ungültig oder passt nicht zum Geburtsdatum');
     if (!validateTaxId(b.taxId)) throw badRequest('Steuer-ID ungültig');
-    if (await prisma.user.findFirst({ where: { OR: [{ email: b.email }, { phone: b.phone }] }, select: { id: true } }))
+    if (await prisma.user.findUnique({ where: { email: b.email }, select: { id: true } }))
       throw conflict(TAKEN);
     const geo = await geocodeAddress(undefined, b.zip, b.city);
     const user = await prisma.user.create({
@@ -56,7 +56,7 @@ freelancerRouter.post('/register', rateLimit({ windowMs: 15 * 60_000, limit: 20 
         } },
       },
     });
-    // Codes per E-Mail und SMS; Sitzung erst nach Bestätigung (POST /auth/verify)
+    // E-Mail-Code; Sitzung erst nach Bestätigung (POST /auth/verify)
     res.status(201).json({ verificationToken: await startSignupVerification(user) });
   } catch (err) {
     if ((err as { code?: string })?.code === 'P2002') return next(conflict(TAKEN));
@@ -69,7 +69,7 @@ freelancerRouter.use(authenticate);
 /** Eigenes Profil und Status (auch für noch nicht verifizierte/gesperrte Nutzer abrufbar). */
 freelancerRouter.get('/me', async (req, res, next) => {
   try {
-    const me = await prisma.freelancer.findUnique({ where: { userId: req.userId! }, select: { id: true } });
+    const me = await prisma.freelancer.findUnique({ where: { userId: req.userId! }, select: { id: true, user: { select: { totpEnabledAt: true } } } });
     if (!me) throw forbidden('Kein Freelancer-Profil');
     await liftExpiredSuspension(me.id);
     const f = await prisma.freelancer.findUniqueOrThrow({ where: { id: me.id } });
@@ -78,7 +78,7 @@ freelancerRouter.get('/me', async (req, res, next) => {
       displayName: f.displayName, verified: f.verified, verifiedSkills: f.verifiedSkills, claimedSkills: f.claimedSkills,
       rating: f.ratingCount ? +(f.ratingSum / f.ratingCount).toFixed(2) : null, ratingCount: f.ratingCount,
       reliabilityScore: f.reliabilityScore, accountStatus: f.accountStatus, suspendedUntil: f.suspendedUntil,
-      complianceValidated: !!f.complianceValidatedAt, hygiene: cert ? { issuedOn: cert.issuedOn } : null,
+      complianceValidated: !!f.complianceValidatedAt, totpEnabled: !!me.user.totpEnabledAt, hygiene: cert ? { issuedOn: cert.issuedOn } : null,
     });
   } catch (err) { next(err); }
 });

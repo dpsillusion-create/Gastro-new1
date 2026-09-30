@@ -54,15 +54,17 @@ certbot --nginx -d jobs.gastroevolution.de
 - Regelmäßige, verschlüsselte Datenbank-Backups (`pg_dump`).
 - Firewall: nur 22, 80, 443 offen; Port 3000 nicht öffentlich.
 
-## Bestätigungscodes und Zwei-Faktor-Anmeldung (SMS + E-Mail)
-Registrierung und Anmeldung verlangen Codes per E-Mail und SMS. Ohne Zugangsdaten für den Versand kann sich in Produktion
-**niemand registrieren oder anmelden** (bewusst: „fail closed“). Zwei Wege:
+## E-Mail-Codes und Zwei-Faktor-Anmeldung
+- **Registrierung:** Bestätigung der E-Mail-Adresse mit einem 6-stelligen Code.
+- **Anmeldung:** Passwort + zweiter Faktor. Mit eingerichteter **Authenticator-App** (Google Authenticator, Microsoft Authenticator, Authy …)
+  ist das der Code aus der App, sonst ein Code per E-Mail. Die App lässt sich im Bereich „Sicherheit“ einrichten (QR-Code); ohne App
+  kann man sich jederzeit den Code per E-Mail schicken lassen.
+- **Kosten:** keine SMS, keine externen Dienste – nur ein E-Mail-Postfach zum Versenden (SMTP).
 
-1. **Echter Versand** – in `/etc/smartshift.env` eintragen (Vorlage: `backend/.env.example`):
-   `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `MAIL_FROM` sowie `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_FROM`.
-   Danach `systemctl restart smartshift`.
-2. **Übergangsweise zum Testen:** `NOTIFY_MODE=log` in `/etc/smartshift.env`. Die Codes erscheinen dann in `journalctl -u smartshift -f`.
-   Nicht für echte Nutzer verwenden.
+Damit der Versand funktioniert, in `/etc/smartshift.env` eintragen (Vorlage: `backend/.env.example`):
+`SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `MAIL_FROM`, danach `systemctl restart smartshift`.
+Ohne diese Angaben kann sich in Produktion **niemand registrieren oder anmelden** (bewusst so, „fail closed“).
 
-Der Versand ist bisher nur im Protokoll-Modus getestet (keine Zugangsdaten vorhanden). Beim ersten echten Versand bitte einmal selbst
-registrieren und anmelden. `OTP_TEST_CODE` ist nur für automatische Tests gedacht und wird in Produktion ignoriert.
+Zum Testen ohne E-Mail-Zugang: `NOTIFY_MODE=log` in `/etc/smartshift.env` – die Codes erscheinen dann in `journalctl -u smartshift -f`.
+Nicht für echte Nutzer verwenden. Der E-Mail-Versand selbst ist bisher nur im Protokoll-Modus getestet.
+`OTP_TEST_CODE` und `AUTH_RATE_LIMIT` sind für automatische Tests gedacht (`OTP_TEST_CODE` wird in Produktion ignoriert).

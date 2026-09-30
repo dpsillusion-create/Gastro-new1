@@ -112,3 +112,8 @@ footer a { text-decoration: none; } footer a:hover { color: var(--text); }
 .link { background: none; border: 0; padding: 0; font: 500 14px var(--sans); color: var(--brand); text-decoration: underline; cursor: pointer; } .link:hover { color: var(--accent); }
 .links { display: flex; }
 #verifyText { margin: 0 0 14px; }
+
+/* Authenticator-Einrichtung */
+.qr { display: block; margin: 8px auto; border: 1px solid var(--line); border-radius: 10px; background: #fff; image-rendering: pixelated; }
+.secret { text-align: center; font: 500 15px var(--mono); letter-spacing: .08em; color: var(--muted); margin: 4px 0 14px; word-break: break-all; }
+ol.hint { padding-left: 20px; margin: 10px 0; }

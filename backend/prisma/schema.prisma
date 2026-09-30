@@ -56,10 +56,17 @@ model User {
   email       String             @unique
   /// scrypt-Hash; leer für Nutzer, die sich über das bestehende GastroEvolution-Login anmelden
   passwordHash String?
-  /// Handynummer im E.164-Format (eindeutig: eine Nummer = ein Konto)
-  phone           String?   @unique
+  /// Handynummer im E.164-Format – Kontaktdatum, wird NICHT per SMS geprüft (daher nicht eindeutig)
+  phone           String?
   emailVerifiedAt DateTime?
   phoneVerifiedAt DateTime?
+  /// Authenticator-App (TOTP, RFC 6238): Secret AES-256-GCM verschlüsselt; aktiv erst nach Bestätigung mit einem Code
+  totpSecretEnc   String?
+  totpEnabledAt   DateTime?
+  /// letzter akzeptierter 30-Sekunden-Schritt → ein Code ist nur einmal nutzbar (Replay-Schutz)
+  totpLastStep    Int?
+  totpFailures    Int       @default(0)
+  totpLockedUntil DateTime?
   otpChallenges   OtpChallenge[]
   memberships RestaurantMember[]
   freelancer  Freelancer?

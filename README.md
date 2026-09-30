@@ -44,5 +44,5 @@ Mindestlohn: `MIN_WAGE_CENTS` (Standard 1390 = 13,90 €/h, Stand 2026).
 **Weboberfläche für Gastronomen:** `https://jobs.gastroevolution.de/app/` (Browser auf `/` werden dorthin geleitet, `curl` bekommt weiter den JSON-Status).
 Dateien: `backend/public/` (statisch, ohne Inline-Skripte wegen der Content-Security-Policy). Ohne neue Abhängigkeiten.
 
-**Anmeldung:** Registrierung mit E-Mail **und** Handynummer (beide per Code bestätigt); jede Anmeldung mit Passwort + 6-stelligem Code (SMS oder E-Mail).
+**Anmeldung:** Registrierung mit E-Mail (per Code bestätigt) und Handynummer (Kontaktdatum); jede Anmeldung mit Passwort + zweitem Faktor (Authenticator-App oder E-Mail-Code).
 **Aushilfen:** Freischaltung automatisch, sobald der Hygienenachweis (Belehrung § 43 IfSG) hochgeladen ist; Betriebe sehen das Dokument erst nach ihrer Zusage.

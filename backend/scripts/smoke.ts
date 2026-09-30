@@ -7,6 +7,7 @@
 import { PrismaClient } from '@prisma/client';
 import jwt from 'jsonwebtoken';
 import { encrypt } from '../src/services/crypto';
+import { totpCode } from '../src/services/totp';
 
 const prisma = new PrismaClient();
 const BASE = process.env.BASE_URL ?? `http://127.0.0.1:${process.env.PORT ?? 3000}`;
@@ -87,7 +88,7 @@ async function main() {
   check('Inhaber → 201, Status OPEN', created.status === 201 && created.json.status === 'OPEN', created);
   const shiftId: string = created.json.id;
 
-  console.log('— Registrierung / Zwei-Faktor');
+  console.log('— Registrierung / Zwei-Faktor (E-Mail-Code)');
   const CODE = '123456'; // = OTP_TEST_CODE des Testservers
   const reg = { email: 'neu@smoketest.invalid', phone: '0171 1000001', password: 'ein-langes-passwort', restaurantName: 'Smoketest Restaurant', street: 'Teststr. 2',
     zip: '20095', city: 'Hamburg', betriebsnummer: '12345678', latitude: 53.55, longitude: 9.99 };
@@ -97,23 +98,18 @@ async function main() {
   check('Registrierung → 201, noch KEIN Sitzungstoken', rr.status === 201 && !!rr.json.verificationToken && !rr.json.token, rr);
   check('Zwischen-Token ist keine Sitzung → 401', (await fetch(BASE + '/api/v1/auth/me', { headers: { authorization: `Bearer ${rr.json.verificationToken}` } })).status === 401);
   check('doppelte E-Mail → 409', (await api('POST', '/api/v1/auth/register', null, { ...reg, phone: '0171 1000002' })).status === 409);
-  check('doppelte Handynummer → 409', (await api('POST', '/api/v1/auth/register', null, { ...reg, email: 'anders@smoketest.invalid' })).status === 409);
   const nv = await api('POST', '/api/v1/auth/login', null, { email: reg.email, password: reg.password });
-  check('Login vor Bestätigung → 403 NOT_VERIFIED', nv.status === 403 && nv.json?.error === 'NOT_VERIFIED', nv);
-  const badCode = await api('POST', '/api/v1/auth/verify', null, { verificationToken: rr.json.verificationToken, emailCode: '000000', phoneCode: CODE });
-  check('falscher E-Mail-Code → 400, SMS-Code zählt', badCode.status === 400 && badCode.json.phoneVerified === true && badCode.json.emailVerified === false, badCode);
+  check('Login vor E-Mail-Bestätigung → 403 NOT_VERIFIED', nv.status === 403 && nv.json?.error === 'NOT_VERIFIED', nv);
+  check('falscher E-Mail-Code → 400', (await api('POST', '/api/v1/auth/verify', null, { verificationToken: rr.json.verificationToken, emailCode: '000000' })).status === 400);
   const vr = await api('POST', '/api/v1/auth/verify', null, { verificationToken: rr.json.verificationToken, emailCode: CODE });
-  check('E-Mail-Code nachgereicht → Sitzungstoken', vr.status === 200 && !!vr.json.token, vr);
+  check('richtiger E-Mail-Code → Sitzungstoken', vr.status === 200 && !!vr.json.token, vr);
   check('Login falsches Passwort → 401', (await api('POST', '/api/v1/auth/login', null, { email: reg.email, password: 'falsch-falsch-falsch' })).status === 401);
   const l1 = await api('POST', '/api/v1/auth/login', null, { email: reg.email, password: reg.password });
-  check('Login Schritt 1 → Zwei-Faktor verlangt, kein Token', l1.status === 200 && l1.json.twoFactor === true && !l1.json.token, l1);
+  check('Login Schritt 1 → E-Mail-Code verlangt, kein Token', l1.status === 200 && l1.json.twoFactor === 'email' && !l1.json.token, l1);
   check('Login mit falschem Code → 400', (await api('POST', '/api/v1/auth/login/verify', null, { challengeToken: l1.json.challengeToken, code: '111111' })).status === 400);
   const li = await api('POST', '/api/v1/auth/login/verify', null, { challengeToken: l1.json.challengeToken, code: CODE });
   check('Login Schritt 2 → 200 + Token', li.status === 200 && !!li.json.token, li);
   check('Code nur einmal verwendbar', (await api('POST', '/api/v1/auth/login/verify', null, { challengeToken: l1.json.challengeToken, code: CODE })).status === 400);
-  const l2 = await api('POST', '/api/v1/auth/login', null, { email: reg.email, password: reg.password });
-  check('Code per E-Mail anfordern → 204', (await api('POST', '/api/v1/auth/resend', null, { token: l2.json.challengeToken, purpose: 'login', channel: 'EMAIL' })).status === 204);
-  check('Login mit E-Mail-Code → 200', (await api('POST', '/api/v1/auth/login/verify', null, { challengeToken: l2.json.challengeToken, code: CODE })).status === 200);
   const authed = async (m: string, p: string, b?: unknown) => {
     const r = await fetch(BASE + p, { method: m, headers: { 'content-type': 'application/json', authorization: `Bearer ${li.json.token}` }, body: b ? JSON.stringify(b) : undefined });
     const t = await r.text(); return { status: r.status, json: t ? JSON.parse(t) : null };
@@ -126,6 +122,39 @@ async function main() {
   check('/my-shifts zeigt die Schicht', mine.json?.length === 1, mine);
   check('Schicht zurückziehen → 204', (await authed('POST', `/api/v1/marketplace/shifts/${own.json.id}/cancel`)).status === 204);
   check('fremde Restaurant-ID mit eigenem Token → 403', (await authed('POST', '/api/v1/marketplace/shifts', good)).status === 403);
+
+  console.log('— Authenticator-App (TOTP)');
+  const step = () => Math.floor(Date.now() / 30_000);
+  check('Einrichtung ohne Login → 401', (await api('POST', '/api/v1/auth/totp/setup', null, {})).status === 401);
+  const su = await authed('POST', '/api/v1/auth/totp/setup', {});
+  check('Einrichtung liefert Secret + QR-Code', su.status === 200 && /^[A-Z2-7]{32}$/.test(su.json.secret) && su.json.qr.startsWith('data:image/png;base64,') && su.json.otpauthUri.startsWith('otpauth://totp/'), { ...su, json: null });
+  const secret: string = su.json.secret;
+  const dbUser = await prisma.user.findUniqueOrThrow({ where: { email: reg.email } });
+  check('Secret liegt verschlüsselt in der Datenbank', !!dbUser.totpSecretEnc && !dbUser.totpSecretEnc.includes(secret), null);
+  check('Aktivieren mit falschem Code → 400', (await authed('POST', '/api/v1/auth/totp/enable', { code: '000000' })).status === 400);
+  check('Aktivieren mit richtigem Code → 204', (await authed('POST', '/api/v1/auth/totp/enable', { code: totpCode(secret, step()) })).status === 204);
+  check('/me zeigt totpEnabled', (await authed('GET', '/api/v1/auth/me')).json?.totpEnabled === true);
+  const t1 = await api('POST', '/api/v1/auth/login', null, { email: reg.email, password: reg.password });
+  check('Login verlangt jetzt Code aus der App', t1.json?.twoFactor === 'totp', t1);
+  check('falscher App-Code → 400', (await api('POST', '/api/v1/auth/login/verify', null, { challengeToken: t1.json.challengeToken, code: '000000' })).status === 400);
+  const good1 = totpCode(secret, step() + 1); // nächster Schritt (im Toleranzfenster) – der aktuelle wurde beim Aktivieren verbraucht
+  check('richtiger App-Code → 200', (await api('POST', '/api/v1/auth/login/verify', null, { challengeToken: t1.json.challengeToken, code: good1 })).status === 200);
+  const t2 = await api('POST', '/api/v1/auth/login', null, { email: reg.email, password: reg.password });
+  check('derselbe App-Code ein zweites Mal → 400 (Replay-Schutz)', (await api('POST', '/api/v1/auth/login/verify', null, { challengeToken: t2.json.challengeToken, code: good1 })).status === 400);
+  check('Ersatz: E-Mail-Code statt App → 204 + Login 200', (await api('POST', '/api/v1/auth/resend', null, { token: t2.json.challengeToken, purpose: 'login' })).status === 204
+    && (await api('POST', '/api/v1/auth/login/verify', null, { challengeToken: t2.json.challengeToken, code: CODE })).status === 200);
+  await prisma.user.update({ where: { id: dbUser.id }, data: { totpLastStep: step() - 5 } });
+  check('Deaktivieren mit falschem Passwort → 401', (await authed('POST', '/api/v1/auth/totp/disable', { password: 'falsch-falsch-falsch', code: totpCode(secret, step()) })).status === 401);
+  check('Deaktivieren mit Passwort + Code → 204', (await authed('POST', '/api/v1/auth/totp/disable', { password: reg.password, code: totpCode(secret, step()) })).status === 204);
+  const t3 = await api('POST', '/api/v1/auth/login', null, { email: reg.email, password: reg.password });
+  check('danach wieder E-Mail-Code als zweiter Faktor', t3.json?.twoFactor === 'email', t3);
+  // Sperre nach Fehlversuchen
+  const su2 = await authed('POST', '/api/v1/auth/totp/setup', {});
+  await authed('POST', '/api/v1/auth/totp/enable', { code: totpCode(su2.json.secret, step()) });
+  const t4 = await api('POST', '/api/v1/auth/login', null, { email: reg.email, password: reg.password });
+  for (let i = 0; i < 5; i++) await api('POST', '/api/v1/auth/login/verify', null, { challengeToken: t4.json.challengeToken, code: '000000' });
+  const locked = await api('POST', '/api/v1/auth/login/verify', null, { challengeToken: t4.json.challengeToken, code: totpCode(su2.json.secret, step() + 1) });
+  check('nach 5 Fehlversuchen gesperrt → 429', locked.status === 429, locked);
 
   console.log('— Freelancer-Flow');
   const early = await api('POST', `/api/v1/marketplace/shifts/${shiftId}/apply`, fu!.id);
@@ -161,9 +190,9 @@ async function main() {
   check('ohne Einwilligung → 400', (await api('POST', '/api/v1/freelancers/register', null, { ...freg, privacyConsent: false })).status === 400);
   check('ungültige Steuer-ID → 400', (await api('POST', '/api/v1/freelancers/register', null, { ...freg, taxId: '86095742710' })).status === 400);
   const fr0 = await api('POST', '/api/v1/freelancers/register', null, freg);
-  check('Registrierung → 201 (Codes per E-Mail und SMS)', fr0.status === 201 && !!fr0.json.verificationToken, fr0);
-  const fr = await api('POST', '/api/v1/auth/verify', null, { verificationToken: fr0.json.verificationToken, emailCode: CODE, phoneCode: CODE });
-  check('beide Codes → Sitzung', fr.status === 200 && !!fr.json.token, fr);
+  check('Registrierung → 201 (Code per E-Mail)', fr0.status === 201 && !!fr0.json.verificationToken, fr0);
+  const fr = await api('POST', '/api/v1/auth/verify', null, { verificationToken: fr0.json.verificationToken, emailCode: CODE });
+  check('E-Mail-Code → Sitzung', fr.status === 200 && !!fr.json.token, fr);
   const fauth = async (m: string, p: string, b?: unknown) => {
     const r = await fetch(BASE + p, { method: m, headers: { 'content-type': 'application/json', authorization: `Bearer ${fr.json.token}` }, body: b ? JSON.stringify(b) : undefined });
     const t = await r.text(); return { status: r.status, json: t ? JSON.parse(t) : null };
