@@ -40,10 +40,10 @@ Bei privatem Repo: vorher einen Deploy-Key oder Token einrichten. Anderer Branch
 ## 5. nginx + HTTPS
 ```bash
 cp /opt/smartshift/deploy/nginx-smartshift.conf /etc/nginx/sites-available/smartshift
-# server_name in der Datei anpassen
+# server_name ist bereits jobs.gastroevolution.de
 ln -s /etc/nginx/sites-available/smartshift /etc/nginx/sites-enabled/
 nginx -t && systemctl reload nginx
-certbot --nginx -d api.deine-domain.de
+certbot --nginx -d jobs.gastroevolution.de
 ```
 
 ## Prüfen
