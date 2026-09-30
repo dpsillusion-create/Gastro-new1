@@ -42,9 +42,10 @@ async function busy(btn, fn) {
 
 // ---- Anmeldung ----
 function view(name) {
-  $('landing').hidden = name !== 'landing'; $('auth').hidden = name !== 'auth'; $('verify').hidden = name !== 'verify'; $('dash').hidden = name !== 'dash';
-  const guest = name !== 'dash';
+  $('landing').hidden = name !== 'landing'; $('auth').hidden = name !== 'auth'; $('verify').hidden = name !== 'verify'; $('dash').hidden = name !== 'dash'; $('adminview').hidden = name !== 'admin';
+  const guest = name !== 'dash' && name !== 'admin';
   $('guestbox').hidden = !guest; $('userbox').hidden = guest; $('nav').hidden = !guest;
+  $('adminBtn').hidden = guest || name === 'admin' || !state.isAdmin; $('backBtn').hidden = name !== 'admin' || !state.restaurantId;
   window.scrollTo({ top: 0 });
 }
 function logout() { store.set(null); view('landing'); }
@@ -82,31 +83,45 @@ async function onSession(token) { store.set(token); await start(); }
 
 // ---- Bestätigungscodes (Registrierung) bzw. zweiter Faktor (Anmeldung) ----
 const pending = { mode: null, token: null };
-function setVerifyRows(emailRow, loginRow) {
+function setVerifyRows(emailRow, loginRow, passRow = false) {
   const f = $('verifyForm').elements;
-  $('emailCodeRow').hidden = !emailRow; $('loginCodeRow').hidden = !loginRow;
-  f.emailCode.required = emailRow; f.code.required = loginRow;
+  $('emailCodeRow').hidden = !emailRow; $('loginCodeRow').hidden = !loginRow; $('newPasswordRow').hidden = !passRow;
+  f.emailCode.required = emailRow; f.code.required = loginRow; f.newPassword.required = passRow;
 }
 function openVerify(mode, token, factor) {
   pending.mode = mode; pending.token = token; view('verify'); show('');
-  const signup = mode === 'signup';
-  $('verifyForm').reset(); setVerifyRows(signup, !signup);
-  $('verifyTitle').textContent = signup ? 'E-Mail bestätigen' : 'Sicherheitscode';
-  $('verifyText').textContent = signup ? 'Wir haben dir einen Code per E-Mail geschickt. Bitte gib ihn hier ein.'
+  const signup = mode === 'signup', reset = mode === 'reset';
+  $('verifyForm').reset(); setVerifyRows(signup, !signup, reset);
+  $('verifyTitle').textContent = reset ? 'Passwort zurücksetzen' : signup ? 'E-Mail bestätigen' : 'Sicherheitscode';
+  $('verifyText').textContent = reset ? 'Falls zu dieser E-Mail-Adresse ein Konto existiert, haben wir dir einen Code geschickt. Gib ihn ein und wähle ein neues Passwort.'
+    : signup ? 'Wir haben dir einen Code per E-Mail geschickt. Bitte gib ihn hier ein.'
     : factor === 'totp' ? 'Gib den 6-stelligen Code aus deiner Authenticator-App ein.' : 'Zur Sicherheit haben wir dir einen Code per E-Mail geschickt.';
-  $('resendMail').textContent = signup ? 'Code erneut senden' : factor === 'totp' ? 'Stattdessen Code per E-Mail senden' : 'Code erneut senden';
+  $('resendMail').textContent = !reset && !signup && factor === 'totp' ? 'Stattdessen Code per E-Mail senden' : 'Code erneut senden';
 }
 $('verifyForm').addEventListener('submit', (e) => {
   e.preventDefault(); const f = formData(e.target);
   busy(e.submitter, async () => {
+    if (pending.mode === 'reset') {
+      await api('/auth/password/reset', { method: 'POST', body: { email: pending.token, code: f.code, newPassword: f.newPassword } });
+      openAuth(true); show('Passwort geändert – bitte melde dich jetzt an.', true); return;
+    }
     const r = pending.mode === 'signup'
       ? await api('/auth/verify', { method: 'POST', body: { verificationToken: pending.token, emailCode: f.emailCode } })
       : await api('/auth/login/verify', { method: 'POST', body: { challengeToken: pending.token, code: f.code } });
     await onSession(r.token);
   });
 });
-const resend = async () => { await api('/auth/resend', { method: 'POST', body: { token: pending.token, purpose: pending.mode } }); show('Neuer Code wurde per E-Mail gesendet.', true); };
+const resend = async () => {
+  if (pending.mode === 'reset') await api('/auth/password/forgot', { method: 'POST', body: { email: pending.token } });
+  else await api('/auth/resend', { method: 'POST', body: { token: pending.token, purpose: pending.mode } });
+  show('Neuer Code wurde per E-Mail gesendet.', true);
+};
 $('resendMail').onclick = (e) => busy(e.target, resend);
+$('forgotLink').onclick = (e) => busy(e.target, async () => {
+  const email = $('loginForm').elements.email.value.trim();
+  if (!email) throw new Error('Bitte trage oben deine E-Mail-Adresse ein.');
+  await api('/auth/password/forgot', { method: 'POST', body: { email } }); openVerify('reset', email);
+});
 
 // ---- Schichten ----
 const fmt = (iso) => new Date(iso).toLocaleString('de-DE', { weekday: 'short', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
@@ -219,16 +234,108 @@ async function loadShifts() {
 }
 
 // ---- Start ----
-const state = { restaurantId: null };
+const state = { restaurantId: null, isAdmin: false };
 async function start() {
   if (!store.get()) return view('landing');
   const me = await api('/auth/me');
+  state.isAdmin = !!me.isAdmin;
   const r = me.restaurants.find((x) => x.role === 'OWNER');
-  if (!r) { logout(); show('Für dieses Konto ist kein Betrieb hinterlegt.'); return; }
-  state.restaurantId = r.id;
-  $('restaurantName').textContent = `${r.name} · ${me.email}`;
+  if (!r && !me.isAdmin) { logout(); show('Für dieses Konto ist kein Betrieb hinterlegt.'); return; }
+  state.restaurantId = r ? r.id : null;
+  $('restaurantName').textContent = r ? `${r.name} · ${me.email}` : me.email;
+  if (!r) return openAdmin();
   view('dash');
   TotpUI.mount($('security'), { api, show, enabled: me.totpEnabled, onChange: () => start() });
+  renderIntegrations();
   await loadShifts();
 }
+
+// ---- API-Schlüssel für Zeiterfassungsterminal / Dienstplan-System ----
+async function renderIntegrations(newKey) {
+  const box = $('integrations'); if (!state.restaurantId) return;
+  const base = `/restaurants/${state.restaurantId}/api-keys`;
+  const keys = await api(base);
+  box.replaceChildren(el('h2', {}, 'Zeiterfassungsterminal'),
+    el('p', { class: 'hint' }, 'Ohne Terminal bestätigen Sie die Anwesenheit selbst (Schaltfläche „Ist erschienen“). Mit einem API-Schlüssel kann Ihr Terminal das Einchecken automatisch melden – dann werden Aushilfen, die nicht einchecken, automatisch als „nicht erschienen“ gewertet.'));
+  const form = el('form', { class: 'row-gap' }, el('input', { name: 'name', placeholder: 'Bezeichnung, z. B. Terminal Küche', required: '', minlength: '2', maxlength: '60' }), el('button', { class: 'btn ghost' }, 'Schlüssel erzeugen'));
+  form.addEventListener('submit', (e) => { e.preventDefault(); busy(e.submitter, async () => {
+    const r = await api(base, { method: 'POST', body: { name: form.elements.name.value } });
+    await renderIntegrations(r.key); // Liste neu laden; der Schlüssel wird nur in dieser einen Ansicht gezeigt
+  }); });
+  box.append(form);
+  if (newKey) box.append(el('div', { class: 'keybox' }, el('strong', {}, 'Ihr API-Schlüssel – wird nur jetzt angezeigt, bitte sicher speichern:'), el('div', {}, el('code', {}, newKey))));
+  for (const k of keys) box.append(el('div', { class: 'applicant' },
+    el('div', {}, el('strong', {}, k.name), el('div', { class: 'meta' }, `${k.prefix}… · erstellt ${new Date(k.createdAt).toLocaleDateString('de-DE')}${k.lastUsedAt ? ' · zuletzt genutzt ' + fmt(k.lastUsedAt) : ' · noch nicht genutzt'}${k.revokedAt ? ' · widerrufen' : ''}`)),
+    k.revokedAt ? '' : el('button', { class: 'secondary', onclick: (ev) => busy(ev.target, async () => { if (!confirm('Schlüssel widerrufen? Das Terminal verliert sofort den Zugriff.')) return; await api(`${base}/${k.id}`, { method: 'DELETE' }); await renderIntegrations(); }) }, 'Widerrufen')));
+  box.append(el('details', { class: 'doc' }, el('summary', {}, 'Anleitung für die Anbindung'), el('pre', {},
+`# Bestätigte Schichten abrufen (Dienstplan-Abgleich)
+curl -H "Authorization: Bearer ge_…" https://jobs.gastroevolution.de/api/v1/integrations/shifts
+
+# Einchecken der zugesagten Aushilfe melden
+curl -X POST -H "Authorization: Bearer ge_…" -H "Content-Type: application/json" \
+  -d '{"shiftId":"<Schicht-ID>"}' https://jobs.gastroevolution.de/api/v1/integrations/clock-in`)));
+}
+
+// ---- Verwaltung (nur Administratoren) ----
+$('adminBtn').onclick = () => openAdmin();
+$('backBtn').onclick = () => start().catch((e) => show(e.message));
+let adminTab = 'overview';
+function openAdmin() { view('admin'); return loadAdmin('overview'); }
+document.querySelectorAll('#adminview [data-admin]').forEach((b) => b.addEventListener('click', () => loadAdmin(b.dataset.admin).catch((e) => show(e.message))));
+$('adminSearch').addEventListener('input', () => { clearTimeout($('adminSearch')._t); $('adminSearch')._t = setTimeout(() => loadAdmin(adminTab).catch((e) => show(e.message)), 350); });
+
+async function openBlob(path) {
+  const w = window.open('', '_blank');
+  try {
+    const res = await fetch(API + path, { headers: { authorization: 'Bearer ' + store.get() } });
+    if (!res.ok) throw new Error(errorText(await res.json().catch(() => null)));
+    if (w) w.location = URL.createObjectURL(await res.blob());
+  } catch (e) { if (w) w.close(); throw e; }
+}
+async function loadAdmin(tabName) {
+  adminTab = tabName; show('');
+  document.querySelectorAll('#adminview [data-admin]').forEach((b) => b.classList.toggle('active', b.dataset.admin === tabName));
+  $('adminSearchRow').hidden = !['freelancers', 'restaurants'].includes(tabName);
+  const body = $('adminBody'), q = encodeURIComponent($('adminSearch').value.trim());
+  const act = (label, fn, cls = 'secondary') => el('button', { class: cls, onclick: (ev) => busy(ev.target, async () => { await fn(); await loadAdmin(tabName); }) }, label);
+  const post = (path, b) => api('/admin' + path, { method: 'POST', body: b });
+  body.replaceChildren();
+  if (tabName === 'overview') {
+    const s = await api('/admin/stats');
+    const stat = (n, l) => el('div', { class: 'stat' }, el('b', {}, String(n)), el('span', {}, l));
+    body.append(el('div', { class: 'grid-stats' }, stat(s.freelancers, 'Aushilfen'), stat(s.verified, 'davon freigeschaltet'), stat(s.suspended, 'gesperrt'), stat(s.restaurants, 'Betriebe'), stat(s.blocked, 'Betriebe gesperrt'),
+      stat(s.shifts.open, 'Schichten offen'), stat(s.shifts.matched, 'Schichten besetzt'), stat(s.shifts.completed, 'Schichten abgeschlossen')));
+  } else if (tabName === 'freelancers') {
+    const list = await api('/admin/freelancers?q=' + q);
+    if (!list.length) body.append(el('p', { class: 'hint' }, 'Keine Treffer.'));
+    for (const f of list) {
+      const suspended = f.accountStatus === 'SUSPENDED';
+      body.append(el('article', { class: 'shift' },
+        el('header', {}, el('div', {}, el('h3', {}, f.displayName), el('div', { class: 'meta' }, `${f.email}${f.phone ? ' · ' + f.phone : ''}`)),
+          el('span', { class: 'pill ' + (suspended ? 'warn' : f.verified ? 'ok' : '') }, suspended ? 'gesperrt' : f.verified ? 'freigeschaltet' : 'nicht freigeschaltet')),
+        el('div', { class: 'kvline' }, el('span', {}, 'Fähigkeiten: ' + (f.skills.join(', ') || '–')), el('span', {}, 'Bewertung: ' + (f.rating ? `★ ${f.rating} (${f.ratingCount})` : '–')),
+          el('span', {}, `Zuverlässigkeit: ${Math.round(f.reliabilityScore * 100)} %`), el('span', {}, `No-Shows: ${f.noShowCount}`),
+          el('span', {}, 'Hygiene: ' + (f.hygieneIssuedOn ? new Date(f.hygieneIssuedOn).toLocaleDateString('de-DE') : 'fehlt')), suspended ? el('span', {}, 'gesperrt bis ' + new Date(f.suspendedUntil).toLocaleDateString('de-DE')) : ''),
+        el('div', { class: 'actions' },
+          suspended ? act('Entsperren', () => post(`/freelancers/${f.id}/unsuspend`)) : act('Sperren …', async () => { const d = parseInt(prompt('Für wie viele Tage sperren?', '30'), 10); if (!d) throw new Error('Abgebrochen'); await post(`/freelancers/${f.id}/suspend`, { days: d }); }),
+          f.verified ? act('Freischaltung entziehen', () => post(`/freelancers/${f.id}/unverify`)) : act('Freischalten', () => post(`/freelancers/${f.id}/verify`)),
+          f.hygieneIssuedOn ? el('button', { class: 'secondary', onclick: (ev) => busy(ev.target, () => openBlob(`/admin/freelancers/${f.id}/hygiene-certificate`)) }, 'Nachweis ansehen') : '',
+          act('Konto löschen …', async () => { if (!confirm(`Konto von ${f.displayName} endgültig anonymisieren? Das kann nicht rückgängig gemacht werden.`)) throw new Error('Abgebrochen'); await api(`/admin/users/${f.userId}`, { method: 'DELETE' }); }, 'secondary danger'))));
+    }
+  } else if (tabName === 'restaurants') {
+    const list = await api('/admin/restaurants?q=' + q);
+    if (!list.length) body.append(el('p', { class: 'hint' }, 'Keine Treffer.'));
+    for (const r of list) body.append(el('article', { class: 'shift' },
+      el('header', {}, el('div', {}, el('h3', {}, r.name), el('div', { class: 'meta' }, `${r.zip} ${r.city} · Betriebsnr. ${r.betriebsnummer || '–'} · ${r.owners.join(', ')}`)),
+        el('span', { class: 'pill ' + (r.blockedAt ? 'warn' : 'ok') }, r.blockedAt ? 'gesperrt' : 'aktiv')),
+      el('div', { class: 'kvline' }, el('span', {}, `${r.shifts} Schichten`)),
+      el('div', { class: 'actions' }, r.blockedAt ? act('Entsperren', () => post(`/restaurants/${r.id}/unblock`))
+        : act('Sperren', async () => { if (!confirm(`${r.name} sperren? Offene Schichten werden zurückgezogen.`)) throw new Error('Abgebrochen'); await post(`/restaurants/${r.id}/block`); }))));
+  } else {
+    const list = await api('/admin/audit');
+    body.append(el('p', { class: 'hint' }, 'Die letzten 100 Verwaltungsaktionen.'));
+    for (const a of list) body.append(el('div', { class: 'kv' }, el('span', {}, `${new Date(a.createdAt).toLocaleString('de-DE')} · ${a.action}`), el('span', { class: 'meta' }, `${a.targetType} ${a.targetId.slice(0, 8)}…`)));
+  }
+}
+
 start().catch((e) => { logout(); show(e.message); });

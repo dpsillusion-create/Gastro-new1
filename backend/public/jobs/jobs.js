@@ -92,31 +92,45 @@ async function onSession(token) {
 
 // ---- Bestätigungscodes (Registrierung) bzw. zweiter Faktor (Anmeldung) ----
 const pending = { mode: null, token: null };
-function setVerifyRows(emailRow, loginRow) {
+function setVerifyRows(emailRow, loginRow, passRow = false) {
   const f = $('verifyForm').elements;
-  $('emailCodeRow').hidden = !emailRow; $('loginCodeRow').hidden = !loginRow;
-  f.emailCode.required = emailRow; f.code.required = loginRow;
+  $('emailCodeRow').hidden = !emailRow; $('loginCodeRow').hidden = !loginRow; $('newPasswordRow').hidden = !passRow;
+  f.emailCode.required = emailRow; f.code.required = loginRow; f.newPassword.required = passRow;
 }
 function openVerify(mode, token, factor) {
   pending.mode = mode; pending.token = token; view('verify'); show('');
-  const signup = mode === 'signup';
-  $('verifyForm').reset(); setVerifyRows(signup, !signup);
-  $('verifyTitle').textContent = signup ? 'E-Mail bestätigen' : 'Sicherheitscode';
-  $('verifyText').textContent = signup ? 'Wir haben dir einen Code per E-Mail geschickt. Bitte gib ihn hier ein.'
+  const signup = mode === 'signup', reset = mode === 'reset';
+  $('verifyForm').reset(); setVerifyRows(signup, !signup, reset);
+  $('verifyTitle').textContent = reset ? 'Passwort zurücksetzen' : signup ? 'E-Mail bestätigen' : 'Sicherheitscode';
+  $('verifyText').textContent = reset ? 'Falls zu dieser E-Mail-Adresse ein Konto existiert, haben wir dir einen Code geschickt. Gib ihn ein und wähle ein neues Passwort.'
+    : signup ? 'Wir haben dir einen Code per E-Mail geschickt. Bitte gib ihn hier ein.'
     : factor === 'totp' ? 'Gib den 6-stelligen Code aus deiner Authenticator-App ein.' : 'Zur Sicherheit haben wir dir einen Code per E-Mail geschickt.';
-  $('resendMail').textContent = signup ? 'Code erneut senden' : factor === 'totp' ? 'Stattdessen Code per E-Mail senden' : 'Code erneut senden';
+  $('resendMail').textContent = !reset && !signup && factor === 'totp' ? 'Stattdessen Code per E-Mail senden' : 'Code erneut senden';
 }
 $('verifyForm').addEventListener('submit', (e) => {
   e.preventDefault(); const f = formData(e.target);
   busy(e.submitter, async () => {
+    if (pending.mode === 'reset') {
+      await api('/auth/password/reset', { method: 'POST', body: { email: pending.token, code: f.code, newPassword: f.newPassword } });
+      openAuth(true); show('Passwort geändert – bitte melde dich jetzt an.', true); return;
+    }
     const r = pending.mode === 'signup'
       ? await api('/auth/verify', { method: 'POST', body: { verificationToken: pending.token, emailCode: f.emailCode } })
       : await api('/auth/login/verify', { method: 'POST', body: { challengeToken: pending.token, code: f.code } });
     await onSession(r.token);
   });
 });
-const resend = async () => { await api('/auth/resend', { method: 'POST', body: { token: pending.token, purpose: pending.mode } }); show('Neuer Code wurde per E-Mail gesendet.', true); };
+const resend = async () => {
+  if (pending.mode === 'reset') await api('/auth/password/forgot', { method: 'POST', body: { email: pending.token } });
+  else await api('/auth/resend', { method: 'POST', body: { token: pending.token, purpose: pending.mode } });
+  show('Neuer Code wurde per E-Mail gesendet.', true);
+};
 $('resendMail').onclick = (e) => busy(e.target, resend);
+$('forgotLink').onclick = (e) => busy(e.target, async () => {
+  const email = $('loginForm').elements.email.value.trim();
+  if (!email) throw new Error('Bitte trage oben deine E-Mail-Adresse ein.');
+  await api('/auth/password/forgot', { method: 'POST', body: { email } }); openVerify('reset', email);
+});
 
 // ---- Hygienenachweis: Foto verkleinern (Handyfotos sind oft > 5 MB), PDF unverändert ----
 const readB64 = (blob) => new Promise((ok, fail) => { const r = new FileReader(); r.onload = () => ok(String(r.result).split(',')[1]); r.onerror = () => fail(new Error('Datei nicht lesbar')); r.readAsDataURL(blob); });
@@ -279,6 +293,14 @@ function renderProfile() {
   if (!p.hygiene) form.hidden = false;
   else box.append(el('div', { class: 'actions' }, el('button', { class: 'link', type: 'button', onclick: () => { form.hidden = !form.hidden; } }, 'Neuen Nachweis hochladen')));
   box.append(form);
+  const d = $('danger'), pw = el('input', { type: 'password', name: 'password', autocomplete: 'current-password', required: '', placeholder: 'Passwort zur Bestätigung' });
+  const del = el('form', { class: 'form', hidden: '' }, pw, el('button', { class: 'btn ghost danger' }, 'Konto endgültig löschen'));
+  del.addEventListener('submit', (ev) => { ev.preventDefault(); busy(ev.submitter, async () => {
+    if (!confirm('Konto wirklich endgültig löschen? Das kann nicht rückgängig gemacht werden.')) return;
+    await api('/freelancers/me', { method: 'DELETE', body: { password: pw.value } }); logout(); show('Dein Konto wurde gelöscht. Alles Gute!', true);
+  }); });
+  d.replaceChildren(el('h2', {}, 'Konto'), el('p', { class: 'hint' }, 'Du kannst dein Konto jederzeit löschen. Profildaten und Hygienenachweis werden entfernt; gesetzlich aufbewahrungspflichtige Meldedaten früherer Schichten bleiben erhalten.'),
+    el('button', { class: 'link danger', type: 'button', onclick: () => { del.hidden = !del.hidden; } }, 'Konto löschen …'), del);
   TotpUI.mount($('security'), { api, show, enabled: p.totpEnabled, onChange: async () => { state.me = await api('/freelancers/me'); renderProfile(); } });
 }
 function setBanner() {

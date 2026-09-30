@@ -68,3 +68,33 @@ Ohne diese Angaben kann sich in Produktion **niemand registrieren oder anmelden*
 Zum Testen ohne E-Mail-Zugang: `NOTIFY_MODE=log` in `/etc/smartshift.env` – die Codes erscheinen dann in `journalctl -u smartshift -f`.
 Nicht für echte Nutzer verwenden. Der E-Mail-Versand selbst ist bisher nur im Protokoll-Modus getestet.
 `OTP_TEST_CODE` und `AUTH_RATE_LIMIT` sind für automatische Tests gedacht (`OTP_TEST_CODE` wird in Produktion ignoriert).
+
+## Betrieb
+
+### Node.js 20
+Der Dienst läuft mit dem Node, das unter `/usr/bin/node` liegt (Ubuntu-Standard ist 18). Empfohlen ist Node 20 (LTS):
+`curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && apt install -y nodejs`, danach `bash deploy/deploy.sh` und `node -v` prüfen.
+
+### Weitere Einstellungen in `/etc/smartshift.env`
+- `PUBLIC_URL=https://jobs.gastroevolution.de` – Adresse in den E-Mails.
+- `MIN_WAGE_CENTS=1390` – gesetzlicher Mindestlohn (2026: 13,90 €; ab 2027: 14,60 €).
+- `WEBHOOK_URL` / `WEBHOOK_SECRET` – optional: Ereignisse `trigger_sofortmeldung_generation` und `shift_matched` an ein externes System (HMAC-signiert).
+
+### Verwaltung einrichten
+Verwaltungsrechte gibt es nur per Kommandozeile: erst normal registrieren, dann
+`cd /opt/smartshift/backend && set -a && . /etc/smartshift.env && set +a && npx tsx scripts/admin.ts make-admin deine@mail.de`.
+Danach erscheint in der Betriebs-Oberfläche der Knopf „Verwaltung“. Admin-Konten sollten die Authenticator-App nutzen.
+
+### Backups
+`apt install postgresql-client`, dann täglich per Cron (`crontab -e` als root):
+`0 3 * * * /opt/smartshift/deploy/backup.sh >> /var/log/smartshift-backup.log 2>&1`
+Aufbewahrung 14 Tage (`KEEP_DAYS`), Ordner `/var/backups/smartshift`. Zusätzlich Kopien **außerhalb** des Servers anlegen und den
+`SSN_ENCRYPTION_KEY` getrennt aufbewahren. Wiederherstellen: `gunzip -c <Datei>.sql.gz | psql "$DATABASE_URL"`.
+
+### Zeiterfassungsterminal anbinden
+Betrieb legt in der Oberfläche unter „Einstellungen → Zeiterfassungsterminal“ einen API-Schlüssel an. Das Terminal ruft
+`POST /api/v1/integrations/clock-in` mit `{"shiftId": "…"}` beim Einchecken und `GET /api/v1/integrations/shifts` für den Abgleich.
+Sobald ein Schlüssel aktiv ist, wertet der Worker fehlendes Einchecken automatisch als „nicht erschienen“.
+
+### Dienste
+`systemctl status smartshift smartshift-worker` · Logs `journalctl -u smartshift -f` · Health `curl https://jobs.gastroevolution.de/health`

@@ -1,48 +1,58 @@
-# Gastro – SmartShift Swap
+# GastroEvolution – SmartShift Swap
 
-Personalmarktplatz für Spontanaushilfen (Kern-Backend, Python ≥ 3.9, nur Standardbibliothek).
+Lokaler Marktplatz für Spontanaushilfen in der Gastronomie: Betriebe schreiben kurzfristig offene Schichten aus,
+verifizierte Aushilfen aus der Region (max. 25 km) nehmen sie per Wisch an. Bei Zusage entstehen automatisch
+ein temporärer Mitarbeiter, ein Dienstplan-Eintrag und die Daten für die gesetzliche Sofortmeldung.
 
-- `smartshift/schema.py` – Tabellen `shift_marketplace`, `freelancer_profile` (+ Bewerbungen, temporäres
-  Zeiterfassungsprofil, Sofortmeldungs-Datensatz, Push-Nachrichten)
-- `smartshift/matching.py` / `geo.py` – Matchmaking: verifiziert, ≤ 25 km (Haversine), Skill-Tag passt zur Rolle
-- `smartshift/service.py` – Flow: `publish_shift` → `feed`/`swipe` → `applicants` → `confirm` → `complete`
+Live: **https://jobs.gastroevolution.de** – Betriebe unter `/app/`, Aushilfen (installierbare Handy-Web-App) unter `/jobs/`.
 
-`confirm` legt atomar an: temporäres Profil (Zeiterfassung/Dienstplan), Sofortmeldungs-Datensatz, Push-Nachricht.
-
-Tests: `python3 -m unittest discover -s tests -v`
-
-## Offen / Annahmen
-- Die Sofortmeldung wird nur als Datensatz (`immediate_notification`, Status `READY`) erzeugt; die
-  Übermittlung an die DEÜV-Schnittstelle und die Push-/Geräteanbindung sind nicht implementiert.
-- Die Sozialversicherungsnummer liegt hier im Klartext – für Produktion verschlüsseln (DSGVO).
-- Rollen→Tag-Zuordnung in `matching.ROLE_TAGS` ist ein Startwert.
-
-## Backend (TypeScript / Express / Prisma) – `backend/`
-`npm install && cp .env.example .env && npx prisma migrate dev && npm run dev` · Tests: `npm test`
-
-| Endpoint | Zweck |
+## Aufbau
+| Ordner | Inhalt |
 |---|---|
-| `POST /api/v1/marketplace/shifts` | Wirt schreibt Schicht aus (Restaurant-Zugriff wird per `RestaurantMember` geprüft) |
-| `GET /api/v1/marketplace/search` | Umkreissuche (Bounding-Box + Haversine in SQL, max. 25 km, verifizierte Skills) |
-| `POST /api/v1/marketplace/shifts/:id/apply` | Bewerben – nur mit validierten SV-Nr./Steuer-ID/Geburtsdatum, nicht gesperrt |
-| `POST /api/v1/marketplace/shifts/:id/accept` | Match: atomar OPEN→MATCHED, Hook für Dienstplan/Zeiterfassung/Sofortmeldung, Webhook `trigger_sofortmeldung_generation` (Outbox) |
-| `GET /api/v1/marketplace/shifts/:id/sofortmeldung-export` | DEÜV-Meldedaten für den Arbeitgeber |
-| `POST /api/v1/auth/register`, `/login`, `GET /auth/me` | Registrierung (Betrieb + Inhaber, Adresse wird geocodiert), Login (JWT, 8 h), Profil |
-| `GET /api/v1/marketplace/my-shifts`, `POST .../shifts/:id/cancel` | Wirt: eigene Schichten mit Bewerbungen, Schicht zurückziehen |
-| `PUT /api/v1/freelancers/me/compliance` | Pflichtangaben einreichen + validieren |
+| `backend/` | Node.js/Express-API (TypeScript), Prisma/PostgreSQL, Worker, Tests |
+| `backend/public/` | Oberfläche für Betriebe und Verwaltung (`/app/`), Aushilfen-App (`/jobs/`), Schriften (selbst gehostet) |
+| `backend/scripts/` | `smoke.ts` (Durchlauf-Test), `admin.ts` (Verwaltung per Kommandozeile) |
+| `deploy/` | Deploy-Skript, systemd-Dienste, nginx-Konfiguration, Backup-Skript, Serveranleitung |
 
-Zuverlässigkeit: `services/reliability.ts` – `registerNoShow` (−0,25, bei < 0,90 → `SUSPENDED` für 30 Tage),
-`recordClockIn` (vom Terminal), `sweepNoShows` (Cron alle ~5 min). Nach Ablauf der Sperre Bewährungs-Score 0,90.
+Start lokal: `cd backend && npm install && cp .env.example .env && npx prisma migrate dev && npm run dev`
 
-**Nicht gegen eine echte Datenbank getestet** (Typecheck, Schema-Validierung und Unit-Tests laufen). Vor Produktivbetrieb prüfen:
-DEÜV-Schlüssel (Personengruppe 110, Tätigkeitsschlüssel), die Prüfziffernlogik mit echten Testdaten, Auth-Anbindung (JWT `sub`).
+## Funktionen
+**Betriebe:** registrieren (E-Mail-Code), anmelden mit zweitem Faktor, Schichten ausschreiben (Mindestlohn-Prüfung), Bewerber mit
+Bewertung und Hygiene-Hinweis sehen, bestätigen, Anwesenheit melden, Schicht abschließen und bewerten, Meldedaten der Sofortmeldung
+exportieren, Hygienenachweis der zugesagten Aushilfe einsehen, API-Schlüssel für das Zeiterfassungsterminal verwalten.
 
-**Durchlauf-Test gegen die echte Datenbank:** `cd backend && BASE_URL=http://127.0.0.1:3100 npm run smoke`
-(braucht die Umgebungsvariablen des Servers; legt nur Testdaten `@smoketest.invalid` an und löscht sie wieder).
-Mindestlohn: `MIN_WAGE_CENTS` (Standard 1390 = 13,90 €/h, Stand 2026).
+**Aushilfen:** registrieren (SV-Nummer, Steuer-ID, Geburtsdatum mit Prüfziffern, Hygienenachweis-Upload → automatische Freischaltung),
+Schichten im Umkreis per Wisch annehmen, Bewerbungen verfolgen (Adresse erst nach Zusage), Profil mit Bewertung und Zuverlässigkeit, Konto löschen.
 
-**Weboberfläche für Gastronomen:** `https://jobs.gastroevolution.de/app/` (Browser auf `/` werden dorthin geleitet, `curl` bekommt weiter den JSON-Status).
-Dateien: `backend/public/` (statisch, ohne Inline-Skripte wegen der Content-Security-Policy). Ohne neue Abhängigkeiten.
+**Sicherheit:** Passwort + zweiter Faktor (Authenticator-App/TOTP oder E-Mail-Code), Passwort-Reset per E-Mail-Code, Brute-Force-Schutz,
+SV-Nummer/Steuer-ID/Nachweise/Secrets AES-256-GCM-verschlüsselt, Zwischen-Tokens sind keine Sitzungen, Rate-Limits, strikte CSP.
 
-**Anmeldung:** Registrierung mit E-Mail (per Code bestätigt) und Handynummer (Kontaktdatum); jede Anmeldung mit Passwort + zweitem Faktor (Authenticator-App oder E-Mail-Code).
-**Aushilfen:** Freischaltung automatisch, sobald der Hygienenachweis (Belehrung § 43 IfSG) hochgeladen ist; Betriebe sehen das Dokument erst nach ihrer Zusage.
+**Zuverlässigkeit:** No-Show → Score −0,25 und 30 Tage Sperre. Automatisch nur bei Betrieben mit angebundenem Terminal (API-Schlüssel),
+sonst entscheidet der Wirt selbst (E-Mail-Erinnerung 20 Min. nach Schichtbeginn).
+
+**Verwaltung** (Nutzer mit `make-admin`): Übersicht, Aushilfen und Betriebe suchen/sperren/freischalten, Hygienenachweise einsehen,
+Konten anonymisieren (DSGVO), Protokoll aller Verwaltungsaktionen.
+
+**E-Mails:** neue Bewerbung (Wirt), Zusage mit Adresse / Schicht besetzt / Schicht zurückgezogen (Aushilfe), Sperre, Anwesenheits-Erinnerung.
+
+## API (Auszug)
+| Bereich | Endpunkte |
+|---|---|
+| System | `GET /` (JSON-Status, Browser → `/app/`), `GET /health` (prüft die Datenbank) |
+| Anmeldung | `POST /api/v1/auth/register`, `/verify`, `/login`, `/login/verify`, `/resend`, `/password/forgot`, `/password/reset`, `GET /auth/me`, `POST /auth/totp/setup|enable|disable` |
+| Aushilfen | `POST /api/v1/freelancers/register`, `GET /me`, `GET /me/applications`, `PUT /me/hygiene-certificate`, `DELETE /me` |
+| Marktplatz | `POST /api/v1/marketplace/shifts`, `GET /search`, `POST /shifts/:id/apply|withdraw|accept|cancel|attendance|complete`, `GET /my-shifts`, `/shifts/:id/applications|sofortmeldung-export|hygiene-certificate` |
+| Betriebe | `GET/POST/DELETE /api/v1/restaurants/:id/api-keys` |
+| Terminal | `POST /api/v1/integrations/clock-in`, `GET /integrations/shifts` (API-Schlüssel `Authorization: Bearer ge_…`) |
+| Verwaltung | `/api/v1/admin/stats|freelancers|restaurants|audit|users/:id` |
+
+## Tests
+`cd backend && npm test` (Einheitentests: Geo, Prüfziffern, No-Show-Rechnung, TOTP nach RFC 6238).
+Durchlauf gegen echte Datenbank und laufenden Server: `npm run smoke` (Umgebung wie der Server, dazu `OTP_TEST_CODE=123456 NOTIFY_MODE=log`;
+legt nur Testdaten `@smoketest.invalid` an und räumt sie weg).
+
+## Bewusst nicht enthalten / offen
+- Die **Übermittlung der Sofortmeldung** an die Rentenversicherung: es entstehen nur exportfertige Meldedaten (DEÜV-Schlüssel vor Produktivbetrieb prüfen).
+- **Push-Nachrichten** aufs Handy (aktuell: E-Mail, die Aushilfen-App fragt alle 30 s nach, solange sie offen ist).
+- Rechtstexte für diese Seite (Impressum/Datenschutz verlinken auf gastroevolution.de) – rechtlich prüfen lassen.
+- Ob und wie lange Hygienenachweis und Meldedaten aufbewahrt werden müssen, klären Steuerberater/Gesundheitsamt.

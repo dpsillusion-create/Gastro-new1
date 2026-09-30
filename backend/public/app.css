@@ -117,3 +117,13 @@ footer a { text-decoration: none; } footer a:hover { color: var(--text); }
 .qr { display: block; margin: 8px auto; border: 1px solid var(--line); border-radius: 10px; background: #fff; image-rendering: pixelated; }
 .secret { text-align: center; font: 500 15px var(--mono); letter-spacing: .08em; color: var(--muted); margin: 4px 0 14px; word-break: break-all; }
 ol.hint { padding-left: 20px; margin: 10px 0; }
+
+/* Verwaltung, API-Schlüssel */
+.admin-tabs { margin-top: 6px; } #adminSearchRow { margin: 12px 0; } #adminSearch { max-width: 420px; }
+.grid-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
+.stat { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px; } .stat b { display: block; font: 600 30px var(--serif); } .stat span { color: var(--muted); font-size: 14px; }
+.pill.warn { background: #fdecea; color: #7a1f14; } .pill.ok { background: #e8f3ea; color: var(--green); }
+.keybox { margin-top: 10px; padding: 12px; background: #fff6e5; border: 1px solid #f0d7a7; border-radius: 10px; word-break: break-all; } .keybox code { font: 500 14px var(--mono); }
+details.doc { margin-top: 12px; color: var(--muted); font-size: 14px; } details.doc pre { background: var(--bg2); padding: 12px; border-radius: 10px; overflow-x: auto; font: 13px var(--mono); color: var(--text); }
+.danger { color: #a34d3d; }
+.kvline { display: flex; gap: 8px; flex-wrap: wrap; color: var(--muted); font-size: 14px; margin-top: 4px; }

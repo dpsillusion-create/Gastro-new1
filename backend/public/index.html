@@ -28,6 +28,8 @@
       </div>
       <div id="userbox" class="row-gap" hidden>
         <span id="restaurantName" class="who"></span>
+        <button id="adminBtn" class="btn ghost" type="button" hidden>Verwaltung</button>
+        <button id="backBtn" class="btn ghost" type="button" hidden>← Meine Schichten</button>
         <button id="logout" class="btn ghost" type="button">Abmelden</button>
       </div>
     </div>
@@ -96,6 +98,7 @@
           <label>E-Mail<input name="email" type="email" autocomplete="username" required></label>
           <label>Passwort<input name="password" type="password" autocomplete="current-password" required></label>
           <button class="btn accent block">Anmelden</button>
+          <button id="forgotLink" class="link" type="button">Passwort vergessen?</button>
         </form>
 
         <form id="registerForm" class="form" hidden>
@@ -125,6 +128,7 @@
         <p class="hint" id="verifyText"></p>
         <form id="verifyForm" class="form">
           <label id="emailCodeRow">Code aus der E-Mail<input name="emailCode" inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="\d{6}"></label>
+          <label id="newPasswordRow">Neues Passwort (mind. 10 Zeichen)<input name="newPassword" type="password" minlength="10" autocomplete="new-password"></label>
           <label id="loginCodeRow">6-stelliger Code<input name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="\d{6}"></label>
           <button class="btn accent block">Bestätigen</button>
         </form>
@@ -140,8 +144,6 @@
         <span class="eyebrow"><i></i>Ihr Bereich</span>
         <h1 class="h-md">Schichten <em>verwalten</em></h1>
       </div>
-
-      <section id="security" class="card"></section>
 
       <section class="card">
         <h2>Schicht ausschreiben</h2>
@@ -173,6 +175,23 @@
         <div id="shifts" class="shifts"></div>
         <p id="empty" class="hint" hidden>Noch keine Schichten ausgeschrieben.</p>
       </section>
+
+      <h2 class="list-title">Einstellungen</h2>
+      <section id="security" class="card"></section>
+      <section id="integrations" class="card"></section>
+    </div>
+
+    <!-- Verwaltung (nur Administratoren) -->
+    <div id="adminview" hidden>
+      <div class="dash-head"><span class="eyebrow"><i></i>Verwaltung</span><h1 class="h-md">Aushilfen &amp; <em>Betriebe</em></h1></div>
+      <div class="tabs admin-tabs" role="tablist">
+        <button class="tab active" data-admin="overview" type="button">Übersicht</button>
+        <button class="tab" data-admin="freelancers" type="button">Aushilfen</button>
+        <button class="tab" data-admin="restaurants" type="button">Betriebe</button>
+        <button class="tab" data-admin="audit" type="button">Protokoll</button>
+      </div>
+      <div id="adminSearchRow" class="row-gap" hidden><input id="adminSearch" type="search" placeholder="Suchen (Name, E-Mail, Ort)" aria-label="Suchen"></div>
+      <div id="adminBody"></div>
     </div>
   </main>
 

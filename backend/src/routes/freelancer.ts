@@ -36,7 +36,7 @@ const registerSchema = z.object({
  * Registrierung einer Aushilfe. Pflichtangaben werden sofort formal geprüft (Prüfziffern) und verschlüsselt gespeichert.
  * Das Profil startet UNVERIFIZIERT: erst nach manueller Prüfung (Admin) wird es für Schichten freigeschaltet.
  */
-freelancerRouter.post('/register', rateLimit({ windowMs: 15 * 60_000, limit: 20 }), async (req, res, next) => {
+freelancerRouter.post('/register', rateLimit({ windowMs: 15 * 60_000, limit: Number(process.env.AUTH_RATE_LIMIT ?? 20) }), async (req, res, next) => {
   try {
     const b = registerSchema.parse(req.body);
     if (!validateBirthDate(b.birthDate)) throw badRequest('Geburtsdatum ungültig (Mindestalter 16)');
@@ -120,7 +120,7 @@ freelancerRouter.put('/me/compliance', (req, res, next) => {
  * Hygienenachweis (Belehrung nach § 43 IfSG) hochladen: Foto/PDF als Base64 + Ausstellungsdatum.
  * Beim ersten Upload wird das Profil automatisch freigeschaltet.
  */
-freelancerRouter.put('/me/hygiene-certificate', rateLimit({ windowMs: 60 * 60_000, limit: 15 }), async (req, res, next) => {
+freelancerRouter.put('/me/hygiene-certificate', rateLimit({ windowMs: 60 * 60_000, limit: Number(process.env.AUTH_RATE_LIMIT ?? 15) }), async (req, res, next) => {
   try {
     const b = z.object({ file: z.string().min(100), issuedOn: z.coerce.date() }).strict().parse(req.body);
     const f = await prisma.freelancer.findUnique({ where: { userId: req.userId! }, select: { id: true } });

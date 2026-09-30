@@ -12,6 +12,9 @@ import { freelancerRouter } from './routes/freelancer';
 import { systemRouter } from './routes/system';
 import { marketplaceRouter } from './routes/marketplace';
 
+/** Rate-Limits; für automatische Tests per API_RATE_LIMIT anhebbar (überschreibt die Standardwerte). */
+const API_LIMIT = (dflt: number) => Number(process.env.API_RATE_LIMIT ?? dflt);
+
 export function createApp() {
   const app = express();
   app.set('trust proxy', 1); // hinter nginx: echte Client-IP für Rate-Limits
@@ -23,13 +26,13 @@ export function createApp() {
   app.use('/app', express.static(path.resolve(process.cwd(), 'public'), { index: 'index.html', maxAge: '5m' }));
   app.use('/jobs', express.static(path.resolve(process.cwd(), 'public/jobs'), { index: 'index.html', maxAge: '5m' })); // Aushilfen-App (PWA)
   app.use(systemRouter); // GET / und GET /health – vor den API-Routen, ohne Rate-Limit
-  app.use('/api/v1/marketplace', rateLimit({ windowMs: 60_000, limit: 120 }), marketplaceRouter);
+  app.use('/api/v1/marketplace', rateLimit({ windowMs: 60_000, limit: API_LIMIT(120) }), marketplaceRouter);
 
   app.use('/api/v1/auth', authRouter);
-  app.use('/api/v1/admin', rateLimit({ windowMs: 60_000, limit: 120 }), adminRouter);
-  app.use('/api/v1/restaurants', rateLimit({ windowMs: 60_000, limit: 60 }), restaurantRouter);
-  app.use('/api/v1/integrations', rateLimit({ windowMs: 60_000, limit: 300 }), integrationRouter);
-  app.use('/api/v1/freelancers', rateLimit({ windowMs: 60_000, limit: 20 }), freelancerRouter);
+  app.use('/api/v1/admin', rateLimit({ windowMs: 60_000, limit: API_LIMIT(120) }), adminRouter);
+  app.use('/api/v1/restaurants', rateLimit({ windowMs: 60_000, limit: API_LIMIT(60) }), restaurantRouter);
+  app.use('/api/v1/integrations', rateLimit({ windowMs: 60_000, limit: API_LIMIT(300) }), integrationRouter);
+  app.use('/api/v1/freelancers', rateLimit({ windowMs: 60_000, limit: API_LIMIT(180) }), freelancerRouter); // Mobilfunknetze teilen sich oft eine IP; Registrierung/Upload haben eigene, strengere Limits
 
   app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
     if (err instanceof HttpError) return res.status(err.status).json({ error: err.code, message: err.message });
