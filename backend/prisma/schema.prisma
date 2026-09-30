@@ -1,0 +1,226 @@
+// SmartShift Swap – Erweiterung des GastroEvolution-Schemas (PostgreSQL).
+// `Restaurant` und `User` existieren im Bestandssystem; hier nur die für SmartShift relevanten Felder.
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Skill {
+  BAR
+  SERVICE
+  KITCHEN
+  DISHWASHING
+}
+
+enum ShiftStatus {
+  OPEN
+  MATCHED
+  COMPLETED
+  CANCELLED
+}
+
+enum ApplicationStatus {
+  PENDING
+  ACCEPTED
+  REJECTED
+  WITHDRAWN
+}
+
+enum AccountStatus {
+  ACTIVE
+  SUSPENDED
+}
+
+enum MemberRole {
+  OWNER
+  MANAGER
+  STAFF
+}
+
+model User {
+  id          String             @id @default(uuid())
+  email       String             @unique
+  memberships RestaurantMember[]
+  freelancer  Freelancer?
+}
+
+model Restaurant {
+  id        String @id @default(uuid())
+  name      String
+  street    String
+  zip       String
+  city      String
+  latitude  Float // WGS84
+  longitude Float
+  /// 8-stellige Betriebsnummer des Arbeitgebers (Pflicht für die DEÜV-Sofortmeldung)
+  employerBetriebsnummer String?
+
+  members        RestaurantMember[]
+  shifts         MarketplaceShift[]
+  tempEmployees  TemporaryEmployee[]
+}
+
+/// Zugriffsrecht eines Users auf ein Restaurant (Grundlage aller Wirt-Autorisierungen).
+model RestaurantMember {
+  userId       String
+  restaurantId String
+  role         MemberRole
+  user         User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  restaurant   Restaurant @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+
+  @@id([userId, restaurantId])
+  @@index([restaurantId])
+}
+
+model MarketplaceShift {
+  id            String      @id @default(uuid())
+  restaurantId  String
+  role          String // Anzeigename, z. B. "Barkeeper"
+  requiredSkill Skill
+  requirements  String?
+  /// 9-stelliger Tätigkeitsschlüssel (Schlüsselverzeichnis der BA) für die Sofortmeldung
+  activityKey   String?
+  hourlyRateCents Int
+  startTime     DateTime
+  endTime       DateTime
+  // Denormalisiert vom Restaurant zum Erstellzeitpunkt → Geo-Suche ohne Join-Zwang, Index nutzbar
+  latitude      Float
+  longitude     Float
+  status        ShiftStatus @default(OPEN)
+  /// Optimistic-Locking-Zähler gegen Doppel-Zusagen
+  version       Int         @default(0)
+  createdById   String
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+
+  restaurant   Restaurant         @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+  applications ShiftApplication[]
+  assignment   TemporaryEmployee?
+
+  @@index([status, latitude, longitude]) // Bounding-Box-Vorfilter der Umkreissuche
+  @@index([restaurantId, status])
+  @@index([startTime])
+}
+
+model Freelancer {
+  id             String   @id @default(uuid())
+  userId         String   @unique
+  displayName    String
+  /// Nur durch Admin/Verifizierungsprozess gesetzte Fähigkeiten
+  verifiedSkills Skill[]
+  verified       Boolean  @default(false)
+  ratingSum      Int      @default(0)
+  ratingCount    Int      @default(0)
+  // Wohnort/Standardstandort für die Suche
+  homeLatitude   Float?
+  homeLongitude  Float?
+  // ---- Compliance-Pflichtfelder (NOT NULL) – AES-256-GCM verschlüsselt, nie in API-Antworten ----
+  socialSecurityNumberEnc String   @map("social_security_number")
+  taxIdEnc                String   @map("tax_id")
+  birthDate               DateTime @map("birth_date") @db.Date
+  /// Gesetzt erst nach erfolgreicher Formal-/Prüfziffernvalidierung (services/compliance.ts).
+  /// Ohne diesen Zeitstempel ist keine Bewerbung möglich.
+  complianceValidatedAt   DateTime?
+  // ---- Zuverlässigkeit / Sperrlogik (services/reliability.ts) ----
+  reliabilityScore Float         @default(1.0) @map("reliability_score")
+  accountStatus    AccountStatus @default(ACTIVE)
+  suspendedUntil   DateTime?
+  noShowCount      Int           @default(0)
+  createdAt      DateTime @default(now())
+
+  user          User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  applications  ShiftApplication[]
+  tempEmployees TemporaryEmployee[]
+}
+
+model ShiftApplication {
+  id           String            @id @default(uuid())
+  shiftId      String
+  freelancerId String
+  status       ApplicationStatus @default(PENDING)
+  createdAt    DateTime          @default(now())
+  decidedAt    DateTime?
+
+  shift      MarketplaceShift @relation(fields: [shiftId], references: [id], onDelete: Cascade)
+  freelancer Freelancer       @relation(fields: [freelancerId], references: [id], onDelete: Cascade)
+
+  @@unique([shiftId, freelancerId]) // Idempotentes Swipen
+  @@index([freelancerId, status])
+}
+
+// ---- Integrations-Ziel: Dienstplan / Zeiterfassung / Sofortmeldung ------------------------------
+// Im Bestandssystem ersetzt der Adapter in integrations/timeTracking.ts diese Tabellen durch
+// die echten Dienstplan-/Zeiterfassungs-Services.
+
+model TemporaryEmployee {
+  id           String   @id @default(uuid())
+  restaurantId String
+  freelancerId String
+  shiftId      String   @unique // 1:1 → Trigger ist idempotent
+  validFrom    DateTime
+  validUntil   DateTime // Profil läuft automatisch nach der Schicht ab
+  /// Terminal-PIN für das Einchecken (nur Hash speichern)
+  clockInPinHash String?
+  /// vom Zeiterfassungsterminal gesetzt
+  clockedInAt    DateTime?
+  /// gesetzt, sobald ein No-Show registriert wurde (Idempotenz)
+  noShowRecordedAt DateTime?
+
+  restaurant Restaurant       @relation(fields: [restaurantId], references: [id])
+  freelancer Freelancer       @relation(fields: [freelancerId], references: [id])
+  shift      MarketplaceShift @relation(fields: [shiftId], references: [id])
+  rosterEntry RosterEntry?
+  immediateNotification ImmediateNotification?
+
+  @@index([restaurantId, validFrom])
+}
+
+model RosterEntry {
+  id                  String   @id @default(uuid())
+  restaurantId        String
+  temporaryEmployeeId String   @unique
+  role                String
+  startTime           DateTime
+  endTime             DateTime
+  hourlyRateCents     Int
+
+  temporaryEmployee TemporaryEmployee @relation(fields: [temporaryEmployeeId], references: [id])
+
+  @@index([restaurantId, startTime])
+}
+
+enum NotificationStatus {
+  NEEDS_DATA // Pflichtangaben fehlen (z. B. Betriebsnummer)
+  READY
+  SENT
+  FAILED
+}
+
+/// Datensatz für die gesetzliche Sofortmeldung (§ 28a SGB IV); Übermittlung erfolgt asynchron (Worker).
+model ImmediateNotification {
+  id                  String             @id @default(uuid())
+  temporaryEmployeeId String             @unique
+  payloadEnc          String // verschlüsselter JSON-Payload inkl. SV-Nummer
+  status              NotificationStatus @default(READY)
+  missingFields       String[]
+  createdAt           DateTime           @default(now())
+
+  temporaryEmployee TemporaryEmployee @relation(fields: [temporaryEmployeeId], references: [id])
+}
+
+/// Transactional Outbox: Events werden in derselben Transaktion wie die Fachänderung geschrieben
+/// und danach zuverlässig (mit Retry) an Webhook-Empfänger zugestellt.
+model WebhookEvent {
+  id          String    @id @default(uuid())
+  type        String // z. B. trigger_sofortmeldung_generation
+  payload     Json // enthält nur IDs – keine Personendaten
+  attempts    Int       @default(0)
+  deliveredAt DateTime?
+  createdAt   DateTime  @default(now())
+
+  @@index([deliveredAt, createdAt])
+}

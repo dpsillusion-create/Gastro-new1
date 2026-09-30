@@ -1,0 +1,26 @@
+import express, { type NextFunction, type Request, type Response } from 'express';
+import helmet from 'helmet';
+import rateLimit from 'express-rate-limit';
+import { ZodError } from 'zod';
+import { HttpError } from './errors';
+import { freelancerRouter } from './routes/freelancer';
+import { marketplaceRouter } from './routes/marketplace';
+
+export function createApp() {
+  const app = express();
+  app.use(helmet());
+  app.use(express.json({ limit: '50kb' }));
+  app.use('/api/v1/marketplace', rateLimit({ windowMs: 60_000, limit: 120 }), marketplaceRouter);
+
+  app.use('/api/v1/freelancers', rateLimit({ windowMs: 60_000, limit: 20 }), freelancerRouter);
+
+  app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
+    if (err instanceof HttpError) return res.status(err.status).json({ error: err.code, message: err.message });
+    if (err instanceof ZodError) return res.status(400).json({ error: 'VALIDATION', issues: err.issues });
+    // Prisma: Serialization-Konflikt (P2034) bei gleichzeitigem Accept → Client kann erneut versuchen
+    if ((err as { code?: string })?.code === 'P2034') return res.status(409).json({ error: 'CONFLICT', message: 'Gleichzeitige Änderung, bitte erneut versuchen' });
+    console.error(err);
+    res.status(500).json({ error: 'INTERNAL', message: 'Interner Fehler' });
+  });
+  return app;
+}
