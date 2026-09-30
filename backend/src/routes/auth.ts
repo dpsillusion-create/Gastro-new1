@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import rateLimit from 'express-rate-limit';
 import { z } from 'zod';
+import { TERMS_VERSION } from '../config';
 import { prisma } from '../db';
 import QRCode from 'qrcode';
 import { badRequest, conflict, HttpError, unauthorized } from '../errors';
@@ -35,6 +36,7 @@ const registerSchema = z.object({
   zip: z.string().regex(/^\d{5}$/, 'PLZ: 5 Ziffern'),
   city: z.string().trim().min(2, 'Ort fehlt').max(80),
   betriebsnummer: z.string().regex(/^\d{8}$/, 'Betriebsnummer: 8 Ziffern (für die Sofortmeldung)'),
+  acceptTerms: z.literal(true, { errorMap: () => ({ message: 'Bitte Nutzungsbedingungen und Datenschutz akzeptieren' }) }),
   // Optional (z. B. Tests/Sonderfälle); ohne Angabe wird die Adresse geocodiert
   latitude: z.number().min(-90).max(90).optional(),
   longitude: z.number().min(-180).max(180).optional(),
@@ -54,7 +56,7 @@ authRouter.post('/register', strict, async (req, res, next) => {
       ? { latitude: b.latitude, longitude: b.longitude } : await geocodeAddress(b.street, b.zip, b.city);
     const user = await prisma.user.create({
       data: {
-        email: b.email, phone: b.phone, passwordHash: await hashPassword(b.password),
+        email: b.email, phone: b.phone, passwordHash: await hashPassword(b.password), termsAcceptedAt: new Date(), termsVersion: TERMS_VERSION,
         memberships: { create: { role: 'OWNER', restaurant: { create: {
           name: b.restaurantName, street: b.street, zip: b.zip, city: b.city, employerBetriebsnummer: b.betriebsnummer, ...geo,
         } } } },

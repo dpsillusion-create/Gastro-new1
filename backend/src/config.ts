@@ -20,3 +20,5 @@ export const DEFAULT_RADIUS_KM = 20;
  * Per Umgebungsvariable MIN_WAGE_CENTS anpassbar, wenn sich der Satz ändert.
  */
 export const MIN_WAGE_CENTS = Number(process.env.MIN_WAGE_CENTS ?? 1390);
+/** Version der Nutzungsbedingungen/Datenschutztexte, der Nutzer zugestimmt haben (bei Textänderung hochzählen). */
+export const TERMS_VERSION = '2026-10';

@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import rateLimit from 'express-rate-limit';
 import { z } from 'zod';
+import { TERMS_VERSION } from '../config';
 import { prisma } from '../db';
 import { badRequest, conflict, forbidden, unauthorized } from '../errors';
 import { authenticate } from '../middleware/auth';
@@ -48,7 +49,7 @@ freelancerRouter.post('/register', rateLimit({ windowMs: 15 * 60_000, limit: Num
     const geo = await geocodeAddress(undefined, b.zip, b.city);
     const user = await prisma.user.create({
       data: {
-        email: b.email, phone: b.phone, passwordHash: await hashPassword(b.password),
+        email: b.email, phone: b.phone, passwordHash: await hashPassword(b.password), termsAcceptedAt: new Date(), termsVersion: TERMS_VERSION,
         freelancer: { create: {
           displayName: b.displayName, claimedSkills: b.skills, homeLatitude: geo.latitude, homeLongitude: geo.longitude,
           socialSecurityNumberEnc: encrypt(b.socialSecurityNumber.replace(/\s/g, '').toUpperCase()),

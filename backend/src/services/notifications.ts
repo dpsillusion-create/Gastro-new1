@@ -45,14 +45,16 @@ export function notifyAccepted(shiftId: string, freelancerId: string) {
 }
 
 /** Aushilfen, die nicht zum Zug kamen bzw. deren Schicht zurückgezogen wurde. */
-export function notifyNotSelected(shiftId: string, freelancerIds: string[], reason: 'FILLED' | 'CANCELLED') {
+export function notifyNotSelected(shiftId: string, freelancerIds: string[], reason: 'FILLED' | 'CANCELLED' | 'REOPENED') {
   run((async () => {
     const s = await prisma.marketplaceShift.findUnique({ where: { id: shiftId }, include: { restaurant: { select: { name: true } } } });
     if (!s || freelancerIds.length === 0) return;
     const users = await prisma.freelancer.findMany({ where: { id: { in: freelancerIds } }, include: { user: { select: { email: true } } } });
     for (const f of users)
-      await mail(f.user.email, reason === 'FILLED' ? `Schicht besetzt: ${s.role} bei ${s.restaurant.name}` : `Schicht zurückgezogen: ${s.role} bei ${s.restaurant.name}`,
+      await mail(f.user.email,
+        reason === 'FILLED' ? `Schicht besetzt: ${s.role} bei ${s.restaurant.name}` : reason === 'REOPENED' ? `Schicht wieder frei: ${s.role} bei ${s.restaurant.name}` : `Schicht zurückgezogen: ${s.role} bei ${s.restaurant.name}`,
         reason === 'FILLED' ? `Leider wurde die Schicht „${s.role}“ (${fmt(s.startTime)}) anderweitig besetzt. Weitere Schichten findest du hier: ${BASE()}/jobs/`
+          : reason === 'REOPENED' ? `Gute Nachricht: Die Schicht „${s.role}“ bei ${s.restaurant.name} (${fmt(s.startTime)}) ist wieder frei. Wenn du Zeit hast, bewirb dich hier: ${BASE()}/jobs/`
           : `Der Betrieb hat die Schicht „${s.role}“ (${fmt(s.startTime)}) zurückgezogen. Weitere Schichten findest du hier: ${BASE()}/jobs/`);
   })());
 }
@@ -70,4 +72,49 @@ export function notifySuspended(freelancerId: string, until: Date) {
 /** Wirt: Erinnerung, die Anwesenheit zu bestätigen. */
 export async function sendAttendanceReminder(to: string, who: string, role: string, start: Date) {
   await mail(to, `Ist ${who} erschienen?`, `Ihre Schicht „${role}“ hat um ${fmt(start)} begonnen. Bitte bestätigen Sie, ob ${who} erschienen ist – sonst bleibt die Schicht offen und die Bewertung ist nicht möglich.\n\n${BASE()}/app/`);
+}
+
+const managers = (restaurantId: string) => prisma.restaurantMember.findMany({ where: { restaurantId, role: { in: ['OWNER', 'MANAGER'] } }, include: { user: { select: { email: true } } } });
+
+/** Wirt: nach der Zusage – Sofortmeldung ist vor Arbeitsbeginn abzugeben. */
+export function notifySofortmeldungDue(shiftId: string) {
+  run((async () => {
+    const s = await prisma.marketplaceShift.findUnique({ where: { id: shiftId }, include: { assignment: { include: { freelancer: { select: { displayName: true } }, immediateNotification: true } } } });
+    if (!s?.assignment) return;
+    const missing = s.assignment.immediateNotification?.missingFields ?? [];
+    for (const m of await managers(s.restaurantId))
+      await mail(m.user.email, `Sofortmeldung abgeben: ${s.assignment.freelancer.displayName} (${fmt(s.startTime)})`,
+        `Sie haben ${s.assignment.freelancer.displayName} für „${s.role}“ am ${fmt(s.startTime)} bestätigt.\n\nIm Gaststättengewerbe muss die Sofortmeldung zur Sozialversicherung spätestens bei Arbeitsbeginn abgegeben werden. Die Meldedaten liegen für Sie bereit${missing.length ? ` – es fehlen noch Angaben: ${missing.join(', ')}` : ''}.\n\nMeldedaten exportieren und nach der Meldung als „gemeldet“ markieren: ${BASE()}/app/\n\nHinweis: Bitte klären Sie Einzelheiten der Meldung mit Ihrem Steuerberater bzw. Ihrer Lohnabrechnung.`);
+  })());
+}
+
+/** Wirt: Erinnerung, wenn die Sofortmeldung kurz vor Schichtbeginn noch nicht als gemeldet markiert ist. */
+export async function sendSofortmeldungReminder(to: string, who: string, role: string, start: Date) {
+  await mail(to, `Erinnerung: Sofortmeldung für ${who} fehlt noch`,
+    `Die Schicht „${role}“ mit ${who} beginnt ${fmt(start)}. Die Sofortmeldung ist noch nicht als „gemeldet“ markiert. Bitte melden Sie spätestens bei Arbeitsbeginn und markieren Sie sie danach hier: ${BASE()}/app/`);
+}
+
+/** Wirt: die Aushilfe hat nach der Zusage abgesagt. */
+export function notifyFreelancerCancelled(restaurantId: string, shiftId: string, who: string, hours: number, late: boolean, reported: boolean) {
+  run((async () => {
+    const s = await prisma.marketplaceShift.findUnique({ where: { id: shiftId } });
+    if (!s) return;
+    for (const m of await managers(restaurantId))
+      await mail(m.user.email, `Absage: ${who} für ${s.role} am ${fmt(s.startTime)}`,
+        `${who} hat die bestätigte Schicht „${s.role}“ (${fmt(s.startTime)}) abgesagt – ${late ? `kurzfristig, ${hours.toLocaleString('de-DE', { maximumFractionDigits: 1 })} Stunden vor Beginn` : 'rechtzeitig'}.\n\nDie Schicht ist wieder ausgeschrieben; andere Aushilfen wurden informiert.${reported ? '\n\nWICHTIG: Sie hatten die Sofortmeldung schon als „gemeldet“ markiert – bitte stornieren Sie diese Meldung bei der Sozialversicherung.' : ''}\n\n${BASE()}/app/`);
+  })());
+}
+
+/** Aushilfe: der Betrieb hat die Zusage zurückgenommen. */
+export function notifyMatchCancelledByRestaurant(freelancerId: string, shiftId: string, reopened: boolean, reason?: string) {
+  run((async () => {
+    const [s, f] = await Promise.all([
+      prisma.marketplaceShift.findUnique({ where: { id: shiftId }, include: { restaurant: { select: { name: true } } } }),
+      prisma.freelancer.findUnique({ where: { id: freelancerId }, include: { user: { select: { email: true } } } }),
+    ]);
+    if (!s || !f) return;
+    await mail(f.user.email, `Zusage zurückgenommen: ${s.role} bei ${s.restaurant.name}`,
+      `Leider hat ${s.restaurant.name} die Zusage für „${s.role}“ (${fmt(s.startTime)}) zurückgenommen${reason ? ` – Grund: ${reason}` : ''}. Du musst nicht erscheinen, und dein Konto wird dadurch nicht belastet.\n\nWeitere Schichten: ${BASE()}/jobs/`);
+    void reopened;
+  })());
 }

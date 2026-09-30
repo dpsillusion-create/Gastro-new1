@@ -4,7 +4,7 @@ import { conflict, forbidden, notFound } from '../errors';
 import { onShiftMatched } from '../integrations/timeTracking';
 import { assertComplianceValidated, assertRestaurantManager, assertRestaurantOwner } from '../middleware/auth';
 import { dispatchPendingWebhooks } from './webhooks';
-import { notifyAccepted, notifyNewApplication, notifyNotSelected } from './notifications';
+import { notifyAccepted, notifyNewApplication, notifyNotSelected, notifySofortmeldungDue } from './notifications';
 import { boundingBox } from './geo';
 
 export interface CreateShiftInput {
@@ -130,6 +130,7 @@ export async function acceptApplication(userId: string, shiftId: string, freelan
   // Nach dem Commit: Webhook sofort zustellen (Fire-and-forget; bei Fehler übernimmt der Retry-Worker)
   void dispatchPendingWebhooks().catch(console.error);
   notifyAccepted(shiftId, freelancerId);
+  notifySofortmeldungDue(shiftId);
   const rejected = await prisma.shiftApplication.findMany({ where: { shiftId, status: 'REJECTED' }, select: { freelancerId: true } });
   notifyNotSelected(shiftId, rejected.map((r) => r.freelancerId), 'FILLED');
   return result;

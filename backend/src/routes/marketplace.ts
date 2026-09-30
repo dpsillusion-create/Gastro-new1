@@ -7,6 +7,8 @@ import { assertRestaurantManager, assertRestaurantOwner, authenticate, requireFr
 import { decrypt, decryptBuffer } from '../services/crypto';
 import * as svc from '../services/marketplaceService';
 import { notifyNotSelected } from '../services/notifications';
+import { cancelByFreelancer, cancelByRestaurant } from '../services/assignment';
+import { markSofortmeldungReported, setActivityKey } from '../services/sofortmeldung';
 import { recordClockIn, registerNoShow } from '../services/reliability';
 
 const Skill = z.enum(['BAR', 'SERVICE', 'KITCHEN', 'DISHWASHING']);
@@ -126,7 +128,7 @@ marketplaceRouter.get('/my-shifts', async (req, res, next) => {
         _count: { select: { applications: { where: { status: 'PENDING' } } } },
         assignment: { select: {
           clockedInAt: true, noShowRecordedAt: true, freelancer: { select: { displayName: true } },
-          immediateNotification: { select: { status: true, missingFields: true } },
+          immediateNotification: { select: { status: true, missingFields: true, reportedAt: true, reference: true } },
         } },
       },
     });
@@ -210,5 +212,38 @@ marketplaceRouter.get('/shifts/:id/hygiene-certificate', async (req, res, next) 
     if (!cert) throw notFound('Kein Hygienenachweis hinterlegt');
     res.set({ 'Content-Type': cert.mimeType, 'Cache-Control': 'no-store', 'Content-Disposition': 'inline; filename="hygienenachweis"' })
       .send(decryptBuffer(Buffer.from(cert.dataEnc)));
+  } catch (err) { next(err); }
+});
+
+// ---- Sofortmeldung: geführter Ablauf ----
+/** Betrieb markiert die Sofortmeldung als bei der Sozialversicherung abgegeben (optional mit Referenz). */
+marketplaceRouter.post('/shifts/:id/sofortmeldung/reported', async (req, res, next) => {
+  try {
+    const { reference } = z.object({ reference: z.string().trim().max(60).optional() }).strict().parse(req.body ?? {});
+    await markSofortmeldungReported(uid(req), idParam.parse(req.params.id), reference);
+    res.status(204).end();
+  } catch (err) { next(err); }
+});
+/** Betrieb ergänzt den fehlenden Tätigkeitsschlüssel (9 Ziffern); die Meldedaten werden neu aufgebaut. */
+marketplaceRouter.put('/shifts/:id/activity-key', async (req, res, next) => {
+  try {
+    const { activityKey } = z.object({ activityKey: z.string().regex(/^\d{9}$/, 'Tätigkeitsschlüssel: 9 Ziffern') }).strict().parse(req.body);
+    res.json(await setActivityKey(uid(req), idParam.parse(req.params.id), activityKey));
+  } catch (err) { next(err); }
+});
+
+// ---- Absagen nach der Zusage ----
+/** Aushilfe sagt eine bestätigte Schicht ab (kurzfristige Absage < 24 h senkt die Zuverlässigkeit). */
+marketplaceRouter.post('/shifts/:id/cancel-assignment', async (req, res, next) => {
+  try {
+    const { reason } = z.object({ reason: z.string().trim().max(300).optional() }).strict().parse(req.body ?? {});
+    res.json(await cancelByFreelancer(uid(req), idParam.parse(req.params.id), reason));
+  } catch (err) { next(err); }
+});
+/** Betrieb nimmt die Zusage zurück: `reopen: true` schreibt die Schicht neu aus, `false` sagt sie ganz ab. */
+marketplaceRouter.post('/shifts/:id/cancel-match', async (req, res, next) => {
+  try {
+    const b = z.object({ reopen: z.boolean(), reason: z.string().trim().max(300).optional() }).strict().parse(req.body);
+    res.json(await cancelByRestaurant(uid(req), idParam.parse(req.params.id), b.reopen, b.reason));
   } catch (err) { next(err); }
 });

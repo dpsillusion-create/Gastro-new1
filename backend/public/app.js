@@ -37,7 +37,7 @@ async function api(path, { method = 'GET', body } = {}) {
 }
 async function busy(btn, fn) {
   btn.disabled = true; show('');
-  try { await fn(); } catch (e) { show(e.message); } finally { btn.disabled = false; }
+  try { await fn(); } catch (e) { if (e.message !== 'Abgebrochen') show(e.message); } finally { btn.disabled = false; }
 }
 
 // ---- Anmeldung ----
@@ -77,7 +77,7 @@ $('loginForm').addEventListener('submit', (e) => {
 });
 $('registerForm').addEventListener('submit', (e) => {
   e.preventDefault();
-  busy(e.submitter, async () => { const r = await api('/auth/register', { method: 'POST', body: formData(e.target) }); openVerify('signup', r.verificationToken); });
+  busy(e.submitter, async () => { const fd = new FormData(e.target); const r = await api('/auth/register', { method: 'POST', body: { ...Object.fromEntries(fd), acceptTerms: fd.has('acceptTerms') } }); openVerify('signup', r.verificationToken); });
 });
 async function onSession(token) { store.set(token); await start(); }
 
@@ -172,12 +172,48 @@ async function openCertificate(shiftId) {
   } catch (e) { if (w) w.close(); throw e; }
 }
 
+// Sofortmeldung: Ablauf für den Betrieb (Daten ergänzen → exportieren → melden → abhaken)
+function sofortmeldungControls(s) {
+  const n = s.sofortmeldung, reported = n.status === 'SENT', soon = !reported && new Date(s.startTime).getTime() - Date.now() < 3 * 3600e3;
+  const box = el('div', { class: 'sm' + (soon ? ' warn' : '') }, el('strong', {}, 'Sofortmeldung'));
+  const run = (label, fn, cls = 'secondary') => el('button', { class: cls, onclick: (ev) => busy(ev.target, async () => { await fn(); await loadShifts(); }) }, label);
+  if (reported) { box.append(el('div', { class: 'meta' }, `✓ gemeldet am ${new Date(n.reportedAt).toLocaleString('de-DE')}${n.reference ? ' · Ref. ' + n.reference : ''}`)); return box; }
+  box.append(el('div', { class: 'meta' }, soon ? 'Bald ist Schichtbeginn – bitte jetzt melden! Die Meldung muss spätestens bei Arbeitsbeginn erfolgen.' : 'Bitte spätestens bei Arbeitsbeginn bei der Sozialversicherung melden und danach hier abhaken.'));
+  if (n.status === 'NEEDS_DATA') {
+    const inp = el('input', { inputmode: 'numeric', maxlength: '9', pattern: '\\d{9}', placeholder: 'Tätigkeitsschlüssel (9 Ziffern)', 'aria-label': 'Tätigkeitsschlüssel' });
+    box.append(el('div', { class: 'meta' }, 'Es fehlt: ' + n.missingFields.map((x) => FIELDS[x] || x).join(', ')),
+      el('div', { class: 'row-gap' }, inp, run('Speichern', () => api(`/marketplace/shifts/${s.id}/activity-key`, { method: 'PUT', body: { activityKey: inp.value.trim() } }))));
+    return box;
+  }
+  box.append(el('div', { class: 'actions' },
+    el('button', { class: 'secondary', onclick: (ev) => busy(ev.target, async () => {
+      const data = await api(`/marketplace/shifts/${s.id}/sofortmeldung-export`);
+      const a = el('a', { href: URL.createObjectURL(new Blob([JSON.stringify(data.data, null, 2)], { type: 'application/json' })), download: `sofortmeldung-${s.id}.json` });
+      a.click(); URL.revokeObjectURL(a.href);
+    }) }, 'Meldedaten exportieren'),
+    run('Als gemeldet markieren', async () => {
+      const ref = prompt('Optional: Referenz-/Bestätigungsnummer der Meldung (leer lassen, wenn keine)', '');
+      if (ref === null) throw new Error('Abgebrochen');
+      await api(`/marketplace/shifts/${s.id}/sofortmeldung/reported`, { method: 'POST', body: ref.trim() ? { reference: ref.trim() } : {} });
+    }, 'btn accent')));
+  return box;
+}
+
 // Anwesenheit und Bewertung nach der Schicht
 function matchedControls(s) {
   const a = s.assignment, now = Date.now(), start = new Date(s.startTime).getTime(), end = new Date(s.endTime).getTime();
   const box = el('div', { class: 'applicants' }, el('div', { class: 'meta' }, `Aushilfe: ${a.freelancer.displayName}`),
     el('div', { class: 'actions' }, el('button', { class: 'secondary', onclick: (ev) => busy(ev.target, () => openCertificate(s.id)) }, 'Hygienenachweis ansehen')));
   const act = (label, fn, cls = 'secondary') => el('button', { class: cls, onclick: (ev) => busy(ev.target, async () => { await fn(); await loadShifts(); }) }, label);
+  if (!a.noShowRecordedAt && !a.clockedInAt && now < start) {
+    const warn = s.sofortmeldung && s.sofortmeldung.status === 'SENT' ? '\n\nHinweis: Die Sofortmeldung ist schon als gemeldet markiert – bitte stornieren Sie diese bei der Sozialversicherung.' : '';
+    const cancel = (reopen, text) => async () => {
+      if (!confirm(text + warn)) throw new Error('Abgebrochen');
+      await api(`/marketplace/shifts/${s.id}/cancel-match`, { method: 'POST', body: { reopen } }); show(reopen ? 'Zusage zurückgenommen – die Schicht ist wieder ausgeschrieben.' : 'Schicht abgesagt.', true);
+    };
+    box.append(el('div', { class: 'actions' }, act('Aushilfe austauschen', cancel(true, 'Zusage zurücknehmen und die Schicht neu ausschreiben? Die Aushilfe wird informiert.')),
+      act('Schicht absagen', cancel(false, 'Zusage zurücknehmen und die Schicht ganz absagen? Die Aushilfe wird informiert.'), 'secondary danger')));
+  }
   if (a.noShowRecordedAt) box.append(el('div', { class: 'meta' }, 'Nicht erschienen – die Aushilfe wurde gesperrt.'));
   else if (!a.clockedInAt) {
     const row = el('div', { class: 'actions' });
@@ -214,16 +250,7 @@ function card(s) {
   }
   if (s.status === 'MATCHED' && s.assignment) c.append(matchedControls(s));
   if (s.status === 'COMPLETED' && s.rating) c.append(el('div', { class: 'meta' }, `Abgeschlossen · Bewertung ${'★'.repeat(s.rating)}${'☆'.repeat(5 - s.rating)}`));
-  if (s.status === 'MATCHED' && s.sofortmeldung) {
-    const ok = s.sofortmeldung.status === 'READY';
-    c.append(el('div', { class: 'actions' },
-      el('span', { class: 'meta' }, ok ? 'Sofortmeldung: Daten bereit' : 'Sofortmeldung: bitte ergänzen – ' + s.sofortmeldung.missingFields.map((x) => FIELDS[x] || x).join(', ')),
-      ok ? el('button', { class: 'secondary', onclick: (ev) => busy(ev.target, async () => {
-        const data = await api(`/marketplace/shifts/${s.id}/sofortmeldung-export`);
-        const a = el('a', { href: URL.createObjectURL(new Blob([JSON.stringify(data.data, null, 2)], { type: 'application/json' })), download: `sofortmeldung-${s.id}.json` });
-        a.click(); URL.revokeObjectURL(a.href);
-      }) }, 'Meldedaten exportieren') : ''));
-  }
+  if ((s.status === 'MATCHED' || s.status === 'COMPLETED') && s.sofortmeldung) c.append(sofortmeldungControls(s));
   return c;
 }
 

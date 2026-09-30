@@ -32,7 +32,7 @@ async function api(path, { method = 'GET', body } = {}) {
   if (!res.ok) { const err = new Error(errorText(data)); err.body = data; throw err; }
   return data;
 }
-async function busy(btn, fn) { btn.disabled = true; show(''); try { await fn(); } catch (e) { show(e.message); } finally { btn.disabled = false; } }
+async function busy(btn, fn) { btn.disabled = true; show(''); try { await fn(); } catch (e) { if (e.message !== 'Abgebrochen') show(e.message); } finally { btn.disabled = false; } }
 const fmtTime = (iso) => new Date(iso).toLocaleString('de-DE', { weekday: 'short', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
 const euro = (c) => (c / 100).toLocaleString('de-DE', { style: 'currency', currency: 'EUR' });
 
@@ -236,7 +236,7 @@ $('useLocation').onclick = () => {
 };
 
 // ---- Bewerbungen ----
-const APP_LABEL = { PENDING: 'Warten auf Antwort', ACCEPTED: 'Bestätigt', REJECTED: 'Nicht berücksichtigt' };
+const APP_LABEL = { PENDING: 'Warten auf Antwort', ACCEPTED: 'Bestätigt', REJECTED: 'Nicht berücksichtigt', CANCELLED: 'Von dir abgesagt' };
 async function loadApps(quiet) {
   const list = await api('/freelancers/me/applications');
   const seen = new Set(json('jobs_seen', []));
@@ -262,6 +262,17 @@ function renderApps() {
       c.append(el('div', { class: 'addr' }, `📍 ${r.street}, ${r.zip} ${r.city}`),
         el('p', { class: 'hint' }, 'Bitte pünktlich sein und vor Ort am Zeiterfassungsterminal einchecken.'),
         el('a', { class: 'btn ghost small', target: '_blank', rel: 'noopener', href: 'https://www.openstreetmap.org/search?query=' + encodeURIComponent(`${r.street}, ${r.zip} ${r.city}`) }, 'Route öffnen'));
+    }
+    if (status === 'ACCEPTED' && s.status === 'MATCHED' && new Date(s.startTime) > new Date()) {
+      const hours = (new Date(s.startTime) - Date.now()) / 3.6e6;
+      c.append(el('div', { class: 'actions' }, el('button', { class: 'secondary danger', onclick: (ev) => busy(ev.target, async () => {
+        const warn = hours < 24 ? 'ACHTUNG: Weniger als 24 Stunden vor Beginn. Kurzfristige Absagen senken deine Zuverlässigkeit; bei wiederholten Absagen wird dein Konto gesperrt.\n\n' : 'Eine frühe Absage ist kostenlos.\n\n';
+        if (!confirm(warn + 'Zusage wirklich absagen?')) throw new Error('Abgebrochen');
+        const r = await api(`/marketplace/shifts/${s.id}/cancel-assignment`, { method: 'POST', body: {} });
+        state.me = await api('/freelancers/me'); setBanner(); renderProfile();
+        await loadApps(); await loadDeck().catch(() => {});
+        show(r.suspended ? 'Abgesagt – dein Konto wurde wegen wiederholter kurzfristiger Absagen vorübergehend gesperrt.' : r.late ? 'Abgesagt. Deine Zuverlässigkeit wurde wegen der kurzfristigen Absage etwas gesenkt.' : 'Abgesagt – der Betrieb wurde informiert.', !r.suspended);
+      }) }, 'Zusage absagen')));
     }
     if (status === 'PENDING') c.append(el('div', { class: 'actions' }, el('button', { class: 'secondary', onclick: (ev) => busy(ev.target, async () => {
       await api(`/marketplace/shifts/${s.id}/withdraw`, { method: 'POST' }); await loadApps(); loadDeck().catch(() => {});

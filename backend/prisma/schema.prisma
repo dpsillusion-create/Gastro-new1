@@ -28,6 +28,12 @@ enum ApplicationStatus {
   ACCEPTED
   REJECTED
   WITHDRAWN
+  CANCELLED // nach der Zusage abgesagt
+}
+
+enum CancelledBy {
+  FREELANCER
+  RESTAURANT
 }
 
 enum AccountStatus {
@@ -73,6 +79,9 @@ model User {
   isAdmin         Boolean   @default(false)
   /// Gesetzt bei Löschung/Anonymisierung des Kontos
   deletedAt       DateTime?
+  /// Zustimmung zu Nutzungsbedingungen/Datenschutz (Zeitpunkt und Version der Texte)
+  termsAcceptedAt DateTime?
+  termsVersion    String?
   memberships RestaurantMember[]
   freelancer  Freelancer?
 }
@@ -168,6 +177,8 @@ model Freelancer {
   accountStatus    AccountStatus @default(ACTIVE)
   suspendedUntil   DateTime?
   noShowCount      Int           @default(0)
+  /// Absagen weniger als 24 h vor Schichtbeginn
+  lateCancelCount  Int           @default(0)
   createdAt      DateTime @default(now())
 
   user          User                @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -260,6 +271,11 @@ model ImmediateNotification {
   payloadEnc          String // verschlüsselter JSON-Payload inkl. SV-Nummer
   status              NotificationStatus @default(READY)
   missingFields       String[]
+  /// Vom Betrieb als „bei der Sozialversicherung gemeldet“ markiert
+  reportedAt          DateTime?
+  /// Optional: Bestätigungs-/Referenznummer der Meldung
+  reference           String?
+  reminderSentAt      DateTime?
   createdAt           DateTime           @default(now())
 
   temporaryEmployee TemporaryEmployee @relation(fields: [temporaryEmployeeId], references: [id])
@@ -320,4 +336,20 @@ model AuditLog {
   createdAt  DateTime @default(now())
 
   @@index([createdAt])
+}
+
+/// Absagen nach der Zusage (durch Aushilfe oder Betrieb) – Nachweis und Auswertung; bewusst ohne Fremdschlüssel.
+model ShiftCancellation {
+  id                    String      @id @default(uuid())
+  shiftId               String
+  freelancerId          String
+  cancelledBy           CancelledBy
+  hoursBeforeStart      Float
+  late                  Boolean
+  reason                String?
+  sofortmeldungReported Boolean
+  createdAt             DateTime    @default(now())
+
+  @@index([shiftId])
+  @@index([freelancerId, createdAt])
 }

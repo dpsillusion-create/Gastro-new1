@@ -127,3 +127,9 @@ ol.hint { padding-left: 20px; margin: 10px 0; }
 details.doc { margin-top: 12px; color: var(--muted); font-size: 14px; } details.doc pre { background: var(--bg2); padding: 12px; border-radius: 10px; overflow-x: auto; font: 13px var(--mono); color: var(--text); }
 .danger { color: #a34d3d; }
 .kvline { display: flex; gap: 8px; flex-wrap: wrap; color: var(--muted); font-size: 14px; margin-top: 4px; }
+
+label.check { flex-direction: row; align-items: center; gap: 8px; font-weight: 500; } label.check input { width: auto; }
+label.consent { align-items: flex-start; font-size: 13px; font-weight: 400; color: var(--muted); } label.consent input { margin-top: 3px; }
+.sm { margin-top: 12px; padding: 12px; border: 1px dashed var(--line); border-radius: 10px; display: flex; flex-direction: column; gap: 8px; }
+.sm.warn { background: #fff6e5; border-color: #f0d7a7; }
+.secondary.danger { border-color: #d9b9b1; }
