@@ -14,8 +14,8 @@ const unavailable = () => new HttpError(503, 'DELIVERY_UNAVAILABLE', 'Der Versan
 
 let transport: ReturnType<typeof nodemailer.createTransport> | null = null;
 
-export async function deliver(channel: Channel, to: string, text: string): Promise<void> {
-  if (mode() === 'log') { console.warn(`[NOTIFY_MODE=log] ${channel} an ${to}: ${text}`); return; }
+export async function deliver(channel: Channel, to: string, text: string, subject = 'Dein Bestätigungscode – GastroEvolution'): Promise<void> {
+  if (mode() === 'log') { console.warn(`[NOTIFY_MODE=log] ${channel} an ${to} [${subject}]: ${text}`); return; }
   try {
     {
       const { SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, MAIL_FROM } = process.env;
@@ -24,7 +24,7 @@ export async function deliver(channel: Channel, to: string, text: string): Promi
         host: SMTP_HOST, port: Number(SMTP_PORT ?? 587), secure: Number(SMTP_PORT) === 465,
         auth: SMTP_USER ? { user: SMTP_USER, pass: SMTP_PASS } : undefined,
       });
-      await transport.sendMail({ from: MAIL_FROM, to, subject: 'Dein Bestätigungscode – GastroEvolution', text });
+      await transport.sendMail({ from: MAIL_FROM, to, subject, text });
     }
   } catch (err) {
     console.error(`[notify] ${channel}-Versand fehlgeschlagen:`, (err as Error).message); // ohne Empfänger/Code im Protokoll

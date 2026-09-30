@@ -4,7 +4,10 @@ import rateLimit from 'express-rate-limit';
 import { ZodError } from 'zod';
 import { HttpError } from './errors';
 import path from 'path';
+import { adminRouter } from './routes/admin';
 import { authRouter } from './routes/auth';
+import { integrationRouter } from './routes/integration';
+import { restaurantRouter } from './routes/restaurants';
 import { freelancerRouter } from './routes/freelancer';
 import { systemRouter } from './routes/system';
 import { marketplaceRouter } from './routes/marketplace';
@@ -23,6 +26,9 @@ export function createApp() {
   app.use('/api/v1/marketplace', rateLimit({ windowMs: 60_000, limit: 120 }), marketplaceRouter);
 
   app.use('/api/v1/auth', authRouter);
+  app.use('/api/v1/admin', rateLimit({ windowMs: 60_000, limit: 120 }), adminRouter);
+  app.use('/api/v1/restaurants', rateLimit({ windowMs: 60_000, limit: 60 }), restaurantRouter);
+  app.use('/api/v1/integrations', rateLimit({ windowMs: 60_000, limit: 300 }), integrationRouter);
   app.use('/api/v1/freelancers', rateLimit({ windowMs: 60_000, limit: 20 }), freelancerRouter);
 
   app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {

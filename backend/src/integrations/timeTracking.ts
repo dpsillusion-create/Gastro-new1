@@ -52,5 +52,6 @@ export async function onShiftMatched(tx: Tx, shift: MarketplaceShift, freelancer
     shiftId: shift.id, restaurantId: shift.restaurantId, temporaryEmployeeId: temp.id,
     immediateNotificationId: notification.id, ready: missing.length === 0, missingFields: missing,
   });
+  await enqueueEvent(tx, 'shift_matched', { shiftId: shift.id, restaurantId: shift.restaurantId, temporaryEmployeeId: temp.id, startTime: shift.startTime.toISOString(), endTime: shift.endTime.toISOString(), role: shift.role });
   return temp;
 }

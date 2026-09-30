@@ -8,11 +8,25 @@ import { PrismaClient } from '@prisma/client';
 import jwt from 'jsonwebtoken';
 import { encrypt } from '../src/services/crypto';
 import { totpCode } from '../src/services/totp';
+import { remindAttendance, sweepNoShows } from '../src/services/reliability';
+import { readFileSync } from 'fs';
 
 const prisma = new PrismaClient();
 const BASE = process.env.BASE_URL ?? `http://127.0.0.1:${process.env.PORT ?? 3000}`;
 const token = (sub: string) => jwt.sign({ sub }, process.env.JWT_SECRET!, { algorithm: 'HS256', expiresIn: '10m' });
 let failed = 0;
+// E-Mails, die dieser Prozess selbst "verschickt" (Protokoll-Modus), zusätzlich zum Serverprotokoll auswerten
+const localMails: string[] = [];
+const origWarn = console.warn; console.warn = (...a: unknown[]) => { localMails.push(a.join(' ')); origWarn(...a); };
+/** Prüft, ob der Testserver (Protokoll-Modus) eine bestimmte E-Mail „verschickt“ hat. */
+async function mailSent(to: string, subjectPart: string) {
+  for (let i = 0; i < 15; i++) {
+    if (localMails.some((l) => l.includes(`EMAIL an ${to} [`) && l.includes(subjectPart))) return true;
+    try { if (readFileSync(process.env.SERVER_LOG ?? '/tmp/srv.log', 'utf8').split('\n').some((l) => l.includes(`EMAIL an ${to} [`) && l.includes(subjectPart))) return true; } catch { return false; }
+    await new Promise((r) => setTimeout(r, 200));
+  }
+  return false;
+}
 
 async function api(method: string, path: string, user: string | null, body?: unknown) {
   const res = await fetch(BASE + path, {
@@ -148,6 +162,15 @@ async function main() {
   check('Deaktivieren mit Passwort + Code → 204', (await authed('POST', '/api/v1/auth/totp/disable', { password: reg.password, code: totpCode(secret, step()) })).status === 204);
   const t3 = await api('POST', '/api/v1/auth/login', null, { email: reg.email, password: reg.password });
   check('danach wieder E-Mail-Code als zweiter Faktor', t3.json?.twoFactor === 'email', t3);
+  console.log('— Passwort vergessen');
+  check('unbekannte Adresse → trotzdem 204 (kein Hinweis auf Existenz)', (await api('POST', '/api/v1/auth/password/forgot', null, { email: 'gibtsnicht@smoketest.invalid' })).status === 204);
+  check('bekannte Adresse → 204', (await api('POST', '/api/v1/auth/password/forgot', null, { email: reg.email })).status === 204);
+  check('falscher Reset-Code → 400', (await api('POST', '/api/v1/auth/password/reset', null, { email: reg.email, code: '000000', newPassword: 'neues-langes-passwort' })).status === 400);
+  check('zu kurzes neues Passwort → 400', (await api('POST', '/api/v1/auth/password/reset', null, { email: reg.email, code: CODE, newPassword: 'kurz' })).status === 400);
+  check('richtiger Code → Passwort geändert (204)', (await api('POST', '/api/v1/auth/password/reset', null, { email: reg.email, code: CODE, newPassword: 'neues-langes-passwort' })).status === 204);
+  check('altes Passwort gilt nicht mehr → 401', (await api('POST', '/api/v1/auth/login', null, { email: reg.email, password: reg.password })).status === 401);
+  check('neues Passwort funktioniert', (await api('POST', '/api/v1/auth/login', null, { email: reg.email, password: 'neues-langes-passwort' })).json?.twoFactor === 'email');
+  reg.password = 'neues-langes-passwort';
   // Sperre nach Fehlversuchen
   const su2 = await authed('POST', '/api/v1/auth/totp/setup', {});
   await authed('POST', '/api/v1/auth/totp/enable', { code: totpCode(su2.json.secret, step()) });
@@ -215,6 +238,7 @@ async function main() {
   const s2 = await fauth('GET', '/api/v1/marketplace/search');
   check('nach Verifizierung: Schicht in der Suche', s2.status === 200 && s2.json.shifts.some((x: { id: string }) => x.id === shift2.json.id), s2);
   check('Bewerben → 201', (await fauth('POST', `/api/v1/marketplace/shifts/${shift2.json.id}/apply`)).status === 201);
+  check('E-Mail an den Wirt: neue Bewerbung', await mailSent('owner@smoketest.invalid', 'Neue Bewerbung'));
   const apps1 = await fauth('GET', '/api/v1/freelancers/me/applications');
   check('Bewerbung PENDING, Straße noch verborgen', apps1.json?.[0]?.status === 'PENDING' && apps1.json[0].shift.restaurant.street === undefined, apps1);
   check('Zurückziehen → 204', (await fauth('POST', `/api/v1/marketplace/shifts/${shift2.json.id}/withdraw`)).status === 204);
@@ -225,6 +249,7 @@ async function main() {
   check('Wirt sieht Hygiene-Datum der Bewerberin', lst.json?.[0]?.hygieneIssuedOn?.startsWith(issued), lst);
   check('Dokument vor der Zusage NICHT abrufbar → 403', (await fetch(`${BASE}/api/v1/marketplace/shifts/${shift2.json.id}/hygiene-certificate`, { headers: { authorization: `Bearer ${token(owner!.id)}` } })).status === 403);
   check('Wirt bestätigt → 200', (await api('POST', `/api/v1/marketplace/shifts/${shift2.json.id}/accept`, owner!.id, { freelancerId: fid })).status === 200);
+  check('E-Mail an die Aushilfe: Bestätigt (mit Adresse)', await mailSent(freg.email, 'Bestätigt: Barkeeper'));
   const dl = await fetch(`${BASE}/api/v1/marketplace/shifts/${shift2.json.id}/hygiene-certificate`, { headers: { authorization: `Bearer ${token(owner!.id)}` } });
   check('nach Zusage: Dokument abrufbar (PNG, unverändert)', dl.status === 200 && dl.headers.get('content-type') === 'image/png' && Buffer.from(await dl.arrayBuffer()).equals(Buffer.from(png, 'base64')));
   check('Dokument für Fremde → 403', (await fetch(`${BASE}/api/v1/marketplace/shifts/${shift2.json.id}/hygiene-certificate`, { headers: { authorization: `Bearer ${token(stranger!.id)}` } })).status === 403);
@@ -256,10 +281,93 @@ async function main() {
 
   console.log('— No-Show');
   await movePast(shiftId, 30, 480); // vor 30 Min. begonnen, kein Check-in
+  const ns0 = await sweepNoShows();
+  check('Worker sperrt NICHT automatisch, solange der Betrieb kein Terminal angebunden hat', ns0 === 0 && (await prisma.freelancer.findUniqueOrThrow({ where: { id: (await prisma.freelancer.findFirstOrThrow({ where: { userId: fu!.id } })).id } })).accountStatus === 'ACTIVE');
+  await remindAttendance();
+  check('E-Mail-Erinnerung an den Wirt: Ist … erschienen?', await mailSent('owner@smoketest.invalid', 'erschienen?'));
   const ns = await att(shiftId, 'NO_SHOW');
   check('No-Show senkt Score auf 0.75 und sperrt', ns.status === 200 && ns.json.reliabilityScore === 0.75 && ns.json.suspended, ns);
   check('No-Show idempotent', (await att(shiftId, 'NO_SHOW')).json?.alreadyRecorded === true);
   check('gesperrter Freelancer → 403', (await api('GET', '/api/v1/marketplace/search', fu!.id)).status === 403);
+  check('E-Mail an die Aushilfe: Konto gesperrt', await mailSent('freelancer@smoketest.invalid', 'gesperrt'));
+
+  console.log('— API-Schlüssel und Terminal-Schnittstelle');
+  const rid = (await prisma.restaurant.findFirstOrThrow({ where: { name: 'Smoketest Restaurant', members: { some: { userId: owner!.id } } } })).id;
+  check('Schlüssel anlegen: Fremde → 403', (await api('POST', `/api/v1/restaurants/${rid}/api-keys`, stranger!.id, { name: 'Terminal' })).status === 403);
+  check('Schlüssel anlegen: Manager (nicht Inhaber) → 403', (await api('POST', `/api/v1/restaurants/${rid}/api-keys`, manager!.id, { name: 'Terminal' })).status === 403);
+  const k = await api('POST', `/api/v1/restaurants/${rid}/api-keys`, owner!.id, { name: 'Terminal Küche' });
+  check('Inhaber legt Schlüssel an → 201, Klartext einmalig', k.status === 201 && String(k.json.key).startsWith('ge_'), { ...k, json: null });
+  const kl = await api('GET', `/api/v1/restaurants/${rid}/api-keys`, owner!.id);
+  check('Liste zeigt nur Kennung, nie den Schlüssel', kl.json?.length === 1 && !JSON.stringify(kl.json).includes(k.json.key) && kl.json[0].prefix === k.json.key.slice(0, 8), kl.json);
+  const dbKey = await prisma.restaurantApiKey.findFirstOrThrow({ where: { restaurantId: rid } });
+  check('in der Datenbank nur der Hash', dbKey.keyHash !== k.json.key && dbKey.keyHash.length === 64, null);
+  const ig = async (m: string, p: string, key: string | null, b?: unknown) => {
+    const r = await fetch(BASE + p, { method: m, headers: { 'content-type': 'application/json', ...(key ? { authorization: `Bearer ${key}` } : {}) }, body: b ? JSON.stringify(b) : undefined });
+    const t = await r.text(); return { status: r.status, json: t ? JSON.parse(t) : null };
+  };
+  check('Terminal ohne Schlüssel → 401', (await ig('GET', '/api/v1/integrations/shifts', null)).status === 401);
+  check('falscher Schlüssel → 401', (await ig('GET', '/api/v1/integrations/shifts', 'ge_falsch')).status === 401);
+  check('API-Schlüssel gilt nicht für die normale API → 401', (await ig('GET', '/api/v1/marketplace/my-shifts', k.json.key)).status === 401);
+  // Aushilfe f3 mit Schicht in 10 Minuten
+  const mkF = async (n: string) => {
+    const u = await prisma.user.create({ data: { email: `${n}@smoketest.invalid`, emailVerifiedAt: new Date() } });
+    return prisma.freelancer.create({ data: { userId: u.id, displayName: n, verified: true, verifiedSkills: ['BAR'], claimedSkills: ['BAR'], homeLatitude: 53.55, homeLongitude: 9.99,
+      socialSecurityNumberEnc: encrypt('15070649C103'), taxIdEnc: encrypt('86095742719'), birthDate: new Date('1949-06-07'), complianceValidatedAt: new Date() } });
+  };
+  const f3 = await mkF('terminal-aushilfe');
+  const s3 = await api('POST', '/api/v1/marketplace/shifts', owner!.id, { ...good, startTime: new Date(Date.now() + 10 * 60_000).toISOString(), endTime: new Date(Date.now() + 8 * 3600_000).toISOString() });
+  await prisma.shiftApplication.create({ data: { shiftId: s3.json.id, freelancerId: f3.id } });
+  check('Wirt bestätigt f3 → 200', (await api('POST', `/api/v1/marketplace/shifts/${s3.json.id}/accept`, owner!.id, { freelancerId: f3.id })).status === 200);
+  const list = await ig('GET', '/api/v1/integrations/shifts', k.json.key);
+  check('Dienstplan-Abgleich liefert die bestätigte Schicht, ohne SV-Daten', list.status === 200 && list.json.some((x: { id: string; temporaryEmployee: { name: string } }) => x.id === s3.json.id && x.temporaryEmployee.name === 'terminal-aushilfe') && !JSON.stringify(list.json).includes('15070649'), list.json);
+  check('Check-in für Schicht eines anderen Betriebs → 404', (await ig('POST', '/api/v1/integrations/clock-in', k.json.key, { shiftId: (await prisma.marketplaceShift.findFirstOrThrow({ where: { restaurantId: { not: rid } } })).id })).status === 404);
+  check('Terminal meldet Check-in → 204', (await ig('POST', '/api/v1/integrations/clock-in', k.json.key, { shiftId: s3.json.id })).status === 204);
+  check('zweiter Check-in → 409', (await ig('POST', '/api/v1/integrations/clock-in', k.json.key, { shiftId: s3.json.id })).status === 409);
+  check('Check-in ist im Abgleich sichtbar', !!(await ig('GET', '/api/v1/integrations/shifts', k.json.key)).json.find((x: { id: string }) => x.id === s3.json.id)?.temporaryEmployee?.clockedInAt);
+  // Auto-No-Show mit Terminal: f4, Schicht vor 30 Min. begonnen, kein Check-in
+  const f4 = await mkF('nicht-erschienen');
+  const s4 = await api('POST', '/api/v1/marketplace/shifts', owner!.id, { ...good, startTime: new Date(Date.now() + 3 * 3600_000).toISOString(), endTime: new Date(Date.now() + 11 * 3600_000).toISOString() });
+  await prisma.shiftApplication.create({ data: { shiftId: s4.json.id, freelancerId: f4.id } });
+  await api('POST', `/api/v1/marketplace/shifts/${s4.json.id}/accept`, owner!.id, { freelancerId: f4.id });
+  await movePast(s4.json.id, 30, 480);
+  await sweepNoShows();
+  const f4after = await prisma.freelancer.findUniqueOrThrow({ where: { id: f4.id } });
+  check('MIT Terminal: Worker erkennt No-Show automatisch und sperrt', f4after.accountStatus === 'SUSPENDED' && f4after.reliabilityScore === 0.75, f4after.accountStatus);
+  check('Schlüssel widerrufen → 204', (await api('DELETE', `/api/v1/restaurants/${rid}/api-keys/${k.json.id}`, owner!.id)).status === 204);
+  check('widerrufener Schlüssel → 401', (await ig('GET', '/api/v1/integrations/shifts', k.json.key)).status === 401);
+
+  console.log('— Verwaltung');
+  const admin = await prisma.user.create({ data: { email: 'admin@smoketest.invalid', emailVerifiedAt: new Date(), isAdmin: true } });
+  const A = (m: string, p: string, b?: unknown, user = admin.id) => api(m, '/api/v1/admin' + p, user, b);
+  check('Verwaltung als normaler Nutzer → 403', (await A('GET', '/stats', undefined, owner!.id)).status === 403);
+  check('Verwaltung ohne Login → 401', (await api('GET', '/api/v1/admin/stats', null)).status === 401);
+  const st = await A('GET', '/stats');
+  check('Statistik', st.status === 200 && st.json.freelancers >= 3 && st.json.shifts.open >= 0, st);
+  const fl = await A('GET', '/freelancers?q=Selbst');
+  const fx = fl.json?.[0];
+  check('Aushilfen suchen (Name, E-Mail, Hygiene-Datum)', fl.status === 200 && fx?.email === 'aushilfe@smoketest.invalid' && !!fx.hygieneIssuedOn, fl);
+  check('Sperren für 3 Tage → 204', (await A('POST', `/freelancers/${fx.id}/suspend`, { days: 3 })).status === 204);
+  check('gesperrte Aushilfe kommt nicht mehr in die Suche → 403', (await fauth('GET', '/api/v1/marketplace/search')).status === 403);
+  check('Entsperren → 204, Suche wieder möglich', (await A('POST', `/freelancers/${fx.id}/unsuspend`)).status === 204 && (await fauth('GET', '/api/v1/marketplace/search')).status === 200);
+  check('Freischaltung entziehen → Suche 403', (await A('POST', `/freelancers/${fx.id}/unverify`)).status === 204 && (await fauth('GET', '/api/v1/marketplace/search')).status === 403);
+  check('Freischaltung erteilen → Suche 200', (await A('POST', `/freelancers/${fx.id}/verify`)).status === 204 && (await fauth('GET', '/api/v1/marketplace/search')).status === 200);
+  const av = await fetch(`${BASE}/api/v1/admin/freelancers/${fx.id}/hygiene-certificate`, { headers: { authorization: `Bearer ${token(admin.id)}` } });
+  check('Hygienenachweis einsehen (Admin) → 200', av.status === 200 && av.headers.get('content-type') === 'image/png');
+  check('Zugriff wurde protokolliert', (await A('GET', '/audit')).json?.some((x: { action: string }) => x.action === 'hygiene-certificate.view'));
+  check('Betrieb sperren → 204, offene Schichten storniert', (await A('POST', `/restaurants/${rid}/block`)).status === 204);
+  check('gesperrter Betrieb kann nicht ausschreiben → 403', (await api('POST', '/api/v1/marketplace/shifts', owner!.id, good)).status === 403);
+  check('Betrieb entsperren → Ausschreiben wieder möglich', (await A('POST', `/restaurants/${rid}/unblock`)).status === 204 && (await api('POST', '/api/v1/marketplace/shifts', owner!.id, good)).status === 201);
+  check('Betriebe suchen', (await A('GET', '/restaurants?q=Smoketest')).json?.some((r: { id: string }) => r.id === rid));
+
+  console.log('— Konto löschen (DSGVO)');
+  check('Konto löschen mit falschem Passwort → 401', (await fauth('DELETE', '/api/v1/freelancers/me', { password: 'falsch-falsch-falsch' })).status === 401);
+  const fuser = await prisma.user.findUniqueOrThrow({ where: { email: freg.email } });
+  const del = await fauth('DELETE', '/api/v1/freelancers/me', { password: freg.password });
+  check('Konto löschen → 204', del.status === 204, del);
+  const gone = await prisma.freelancer.findFirstOrThrow({ where: { userId: fuser.id }, include: { user: true, hygieneCertificate: true } });
+  check('Konto anonymisiert (Name, E-Mail, Telefon, Nachweis entfernt)', gone.displayName === 'Gelöschter Nutzer' && gone.user.email.endsWith('@deleted.invalid') && gone.user.phone === null && gone.hygieneCertificate === null && gone.user.deletedAt !== null && !gone.verified);
+  check('Anmeldung nach Löschung nicht mehr möglich → 401', (await api('POST', '/api/v1/auth/login', null, { email: freg.email, password: freg.password })).status === 401);
+  check('Meldedatensatz bleibt (Aufbewahrungspflicht)', (await prisma.temporaryEmployee.count({ where: { freelancerId: gone.id } })) >= 1);
 }
 
 main()

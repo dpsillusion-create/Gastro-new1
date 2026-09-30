@@ -3,6 +3,7 @@
  *   npx tsx scripts/admin.ts pending                       → unverifizierte Aushilfen auflisten
  *   npx tsx scripts/admin.ts verify <email> [BAR,SERVICE]  → Aushilfe freischalten (ohne Skills: angegebene übernehmen)
  *   npx tsx scripts/admin.ts unverify <email>              → Freischaltung entziehen
+ *   npx tsx scripts/admin.ts make-admin <email>            → Verwaltungsrechte vergeben (Bereich „Verwaltung“ in der Betriebs-Oberfläche)
  * Benötigt DATABASE_URL (auf dem Server: `set -a; . /etc/smartshift.env; set +a`).
  */
 import { PrismaClient, Skill } from '@prisma/client';
@@ -23,6 +24,9 @@ async function main() {
       await prisma.freelancer.update({ where: { id: f.id }, data: { verified: true, verifiedSkills: list } });
       console.log(`freigeschaltet mit: ${list.join(',')}`);
     }
-  } else console.log('Befehle: pending | verify <email> [SKILLS] | unverify <email>');
+  } else if ((cmd === 'make-admin' || cmd === 'remove-admin') && email) {
+    const r = await prisma.user.updateMany({ where: { email: email.toLowerCase(), deletedAt: null }, data: { isAdmin: cmd === 'make-admin' } });
+    console.log(r.count ? `${email}: Administrator ${cmd === 'make-admin' ? 'ja' : 'nein'}` : 'Nutzer nicht gefunden');
+  } else console.log('Befehle: pending | verify <email> [SKILLS] | unverify <email> | make-admin <email> | remove-admin <email>');
 }
 main().catch(e => { console.error(e.message); process.exit(1); }).finally(() => prisma.$disconnect());

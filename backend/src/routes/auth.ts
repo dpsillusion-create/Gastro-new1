@@ -141,6 +141,25 @@ authRouter.post('/login/verify', strict, async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+// ---- Passwort vergessen: E-Mail-Code → neues Passwort. Die Antwort verrät nie, ob die Adresse existiert. ----
+authRouter.post('/password/forgot', strict, async (req, res, next) => {
+  try {
+    const { email } = z.object({ email: z.string().trim().toLowerCase().email() }).strict().parse(req.body);
+    const user = await prisma.user.findUnique({ where: { email } });
+    if (user?.passwordHash && !user.deletedAt) await issueCode(user, 'RESET', 'EMAIL').catch((e) => console.error('[reset]', (e as Error).message));
+    res.status(204).end();
+  } catch (err) { next(err); }
+});
+authRouter.post('/password/reset', strict, async (req, res, next) => {
+  try {
+    const b = z.object({ email: z.string().trim().toLowerCase().email(), code: z.string().max(10), newPassword: z.string().min(10, 'Passwort: mindestens 10 Zeichen').max(128) }).strict().parse(req.body);
+    const user = await prisma.user.findUnique({ where: { email: b.email } });
+    if (!user || user.deletedAt || !(await checkCode(user.id, 'RESET', 'EMAIL', b.code))) throw badRequest('Code falsch oder abgelaufen');
+    await prisma.user.update({ where: { id: user.id }, data: { passwordHash: await hashPassword(b.newPassword), emailVerifiedAt: user.emailVerifiedAt ?? new Date() } });
+    res.status(204).end();
+  } catch (err) { next(err); }
+});
+
 // ---- Authenticator-App (TOTP) einrichten / entfernen (angemeldet) ----
 
 /** Startet die Einrichtung: neues Secret (noch inaktiv) + QR-Code. Erst /totp/enable schaltet es scharf. */
@@ -184,8 +203,8 @@ authRouter.get('/me', authenticate, async (req, res, next) => {
   try {
     const user = await prisma.user.findUniqueOrThrow({
       where: { id: req.userId! },
-      select: { email: true, totpEnabledAt: true, memberships: { select: { role: true, restaurant: { select: { id: true, name: true, city: true } } } } },
+      select: { email: true, totpEnabledAt: true, isAdmin: true, memberships: { select: { role: true, restaurant: { select: { id: true, name: true, city: true } } } } },
     });
-    res.json({ email: user.email, totpEnabled: !!user.totpEnabledAt, restaurants: user.memberships.map(m => ({ ...m.restaurant, role: m.role })) });
+    res.json({ email: user.email, totpEnabled: !!user.totpEnabledAt, isAdmin: user.isAdmin, restaurants: user.memberships.map(m => ({ ...m.restaurant, role: m.role })) });
   } catch (err) { next(err); }
 });

@@ -38,6 +38,7 @@ enum AccountStatus {
 enum OtpPurpose {
   SIGNUP
   LOGIN
+  RESET
 }
 
 enum OtpChannel {
@@ -68,6 +69,10 @@ model User {
   totpFailures    Int       @default(0)
   totpLockedUntil DateTime?
   otpChallenges   OtpChallenge[]
+  /// Verwaltungsrechte (nur per scripts/admin.ts vergeben)
+  isAdmin         Boolean   @default(false)
+  /// Gesetzt bei Löschung/Anonymisierung des Kontos
+  deletedAt       DateTime?
   memberships RestaurantMember[]
   freelancer  Freelancer?
 }
@@ -82,6 +87,9 @@ model Restaurant {
   longitude Float
   /// 8-stellige Betriebsnummer des Arbeitgebers (Pflicht für die DEÜV-Sofortmeldung)
   employerBetriebsnummer String?
+  /// Gesperrte Betriebe können keine Schichten ausschreiben (Missbrauchsschutz, durch Verwaltung gesetzt)
+  blockedAt DateTime?
+  apiKeys   RestaurantApiKey[]
 
   members        RestaurantMember[]
   shifts         MarketplaceShift[]
@@ -212,6 +220,8 @@ model TemporaryEmployee {
   clockedInAt    DateTime?
   /// gesetzt, sobald ein No-Show registriert wurde (Idempotenz)
   noShowRecordedAt DateTime?
+  /// Erinnerung an den Wirt („Ist die Aushilfe erschienen?“) wurde gesendet
+  attendanceReminderAt DateTime?
 
   restaurant Restaurant       @relation(fields: [restaurantId], references: [id])
   freelancer Freelancer       @relation(fields: [freelancerId], references: [id])
@@ -282,4 +292,32 @@ model OtpChallenge {
   user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, purpose, channel, createdAt])
+}
+
+/// API-Schlüssel eines Betriebs für das Zeiterfassungsterminal / Dienstplan-System (nur der SHA-256-Hash wird gespeichert).
+model RestaurantApiKey {
+  id           String     @id @default(uuid())
+  restaurantId String
+  name         String
+  prefix       String // die ersten Zeichen zur Wiedererkennung in der Liste
+  keyHash      String     @unique
+  createdAt    DateTime   @default(now())
+  lastUsedAt   DateTime?
+  revokedAt    DateTime?
+  restaurant   Restaurant @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+
+  @@index([restaurantId])
+}
+
+/// Nachvollziehbarkeit sensibler Verwaltungsaktionen (Sperren, Dokumenteinsicht, Löschung).
+model AuditLog {
+  id         String   @id @default(uuid())
+  actorId    String?
+  action     String
+  targetType String
+  targetId   String
+  meta       Json?
+  createdAt  DateTime @default(now())
+
+  @@index([createdAt])
 }

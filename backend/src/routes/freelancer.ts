@@ -2,14 +2,15 @@ import { Router } from 'express';
 import rateLimit from 'express-rate-limit';
 import { z } from 'zod';
 import { prisma } from '../db';
-import { badRequest, conflict, forbidden } from '../errors';
+import { badRequest, conflict, forbidden, unauthorized } from '../errors';
 import { authenticate } from '../middleware/auth';
 import { submitComplianceData, validateBirthDate, validateSocialSecurityNumber, validateTaxId } from '../services/compliance';
 import { encrypt } from '../services/crypto';
 import { geocodeAddress } from '../services/geocode';
 import { phoneField } from './auth';
 import { startSignupVerification } from '../services/otp';
-import { hashPassword } from '../services/password';
+import { anonymizeUser } from '../services/accountDeletion';
+import { hashPassword, verifyPassword } from '../services/password';
 import { saveHygieneCertificate } from '../services/hygiene';
 import { liftExpiredSuspension } from '../services/reliability';
 
@@ -125,6 +126,19 @@ freelancerRouter.put('/me/hygiene-certificate', rateLimit({ windowMs: 60 * 60_00
     const f = await prisma.freelancer.findUnique({ where: { userId: req.userId! }, select: { id: true } });
     if (!f) throw forbidden('Kein Freelancer-Profil');
     await saveHygieneCertificate(f.id, b.file, b.issuedOn);
+    res.status(204).end();
+  } catch (err) { next(err); }
+});
+
+/** Konto löschen (DSGVO). Nicht möglich, solange eine bestätigte Schicht noch bevorsteht. Meldedaten bleiben aufbewahrungspflichtig erhalten. */
+freelancerRouter.delete('/me', async (req, res, next) => {
+  try {
+    const { password } = z.object({ password: z.string().max(128) }).strict().parse(req.body);
+    const user = await prisma.user.findUniqueOrThrow({ where: { id: req.userId! }, include: { freelancer: { select: { id: true } } } });
+    if (!(await verifyPassword(password, user.passwordHash))) throw unauthorized('Passwort falsch');
+    if (user.freelancer && await prisma.temporaryEmployee.count({ where: { freelancerId: user.freelancer.id, validUntil: { gt: new Date() }, shift: { status: 'MATCHED' } } }))
+      throw conflict('Du hast noch eine bestätigte Schicht. Bitte erst absolvieren oder mit dem Betrieb klären.');
+    await anonymizeUser(user.id);
     res.status(204).end();
   } catch (err) { next(err); }
 });

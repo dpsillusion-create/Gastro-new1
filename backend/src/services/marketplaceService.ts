@@ -4,6 +4,7 @@ import { conflict, forbidden, notFound } from '../errors';
 import { onShiftMatched } from '../integrations/timeTracking';
 import { assertComplianceValidated, assertRestaurantManager, assertRestaurantOwner } from '../middleware/auth';
 import { dispatchPendingWebhooks } from './webhooks';
+import { notifyAccepted, notifyNewApplication, notifyNotSelected } from './notifications';
 import { boundingBox } from './geo';
 
 export interface CreateShiftInput {
@@ -16,6 +17,7 @@ export async function createShift(userId: string, input: CreateShiftInput) {
   await assertRestaurantOwner(userId, input.restaurantId);
   const r = await prisma.restaurant.findUnique({ where: { id: input.restaurantId } });
   if (!r) throw notFound('Restaurant nicht gefunden');
+  if (r.blockedAt) throw forbidden('Dieser Betrieb ist gesperrt – bitte wende dich an den Support');
   return prisma.marketplaceShift.create({
     data: { ...input, status: 'OPEN', latitude: r.latitude, longitude: r.longitude, createdById: userId },
   });
@@ -64,9 +66,11 @@ export async function applyToShift(
   if (shift.status !== 'OPEN' || shift.startTime <= new Date()) throw conflict('Schicht nicht mehr offen');
   if (!freelancer.verifiedSkills.includes(shift.requiredSkill)) throw forbidden('Erforderliche Fähigkeit nicht verifiziert');
   const existing = await prisma.shiftApplication.findUnique({ where: { shiftId_freelancerId: { shiftId, freelancerId: freelancer.id } } });
-  if (!existing) return prisma.shiftApplication.create({ data: { shiftId, freelancerId: freelancer.id } });
-  if (existing.status === 'WITHDRAWN') // erneut bewerben nach Zurückziehen
-    return prisma.shiftApplication.update({ where: { id: existing.id }, data: { status: 'PENDING', decidedAt: null } });
+  if (!existing) { const a = await prisma.shiftApplication.create({ data: { shiftId, freelancerId: freelancer.id } }); notifyNewApplication(shiftId); return a; }
+  if (existing.status === 'WITHDRAWN') { // erneut bewerben nach Zurückziehen
+    const a = await prisma.shiftApplication.update({ where: { id: existing.id }, data: { status: 'PENDING', decidedAt: null } });
+    notifyNewApplication(shiftId); return a;
+  }
   return existing; // idempotent
 }
 
@@ -125,6 +129,9 @@ export async function acceptApplication(userId: string, shiftId: string, freelan
   }, { isolationLevel: 'Serializable' });
   // Nach dem Commit: Webhook sofort zustellen (Fire-and-forget; bei Fehler übernimmt der Retry-Worker)
   void dispatchPendingWebhooks().catch(console.error);
+  notifyAccepted(shiftId, freelancerId);
+  const rejected = await prisma.shiftApplication.findMany({ where: { shiftId, status: 'REJECTED' }, select: { freelancerId: true } });
+  notifyNotSelected(shiftId, rejected.map((r) => r.freelancerId), 'FILLED');
   return result;
 }
 

@@ -6,6 +6,7 @@ import { badRequest, conflict, forbidden, notFound, unauthorized } from '../erro
 import { assertRestaurantManager, assertRestaurantOwner, authenticate, requireFreelancer } from '../middleware/auth';
 import { decrypt, decryptBuffer } from '../services/crypto';
 import * as svc from '../services/marketplaceService';
+import { notifyNotSelected } from '../services/notifications';
 import { recordClockIn, registerNoShow } from '../services/reliability';
 
 const Skill = z.enum(['BAR', 'SERVICE', 'KITCHEN', 'DISHWASHING']);
@@ -143,8 +144,10 @@ marketplaceRouter.post('/shifts/:id/cancel', async (req, res, next) => {
     const shift = await prisma.marketplaceShift.findUnique({ where: { id: shiftId } });
     if (!shift) throw notFound('Schicht nicht gefunden');
     await assertRestaurantOwner(uid(req), shift.restaurantId);
+    const waiting = await prisma.shiftApplication.findMany({ where: { shiftId, status: 'PENDING' }, select: { freelancerId: true } });
     const r = await prisma.marketplaceShift.updateMany({ where: { id: shiftId, status: 'OPEN' }, data: { status: 'CANCELLED' } });
     if (r.count !== 1) throw conflict('Nur offene Schichten können zurückgezogen werden');
+    notifyNotSelected(shiftId, waiting.map((w) => w.freelancerId), 'CANCELLED');
     res.status(204).end();
   } catch (err) { next(err); }
 });
