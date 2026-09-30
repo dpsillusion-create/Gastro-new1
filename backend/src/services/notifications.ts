@@ -49,15 +49,16 @@ export function notifyAccepted(shiftId: string, freelancerId: string) {
 }
 
 /** Aushilfen, die nicht zum Zug kamen bzw. deren Schicht zurückgezogen wurde. */
-export function notifyNotSelected(shiftId: string, freelancerIds: string[], reason: 'FILLED' | 'CANCELLED' | 'REOPENED') {
+export function notifyNotSelected(shiftId: string, freelancerIds: string[], reason: 'FILLED' | 'CANCELLED' | 'REOPENED' | 'DECLINED') {
   run((async () => {
     const s = await prisma.marketplaceShift.findUnique({ where: { id: shiftId }, include: { restaurant: { select: { name: true } } } });
     if (!s || freelancerIds.length === 0) return;
     const users = await prisma.freelancer.findMany({ where: { id: { in: freelancerIds } }, include: { user: { select: { email: true } } } });
     for (const f of users)
       await mail(f.user.email,
-        reason === 'FILLED' ? `Schicht besetzt: ${s.role} bei ${s.restaurant.name}` : reason === 'REOPENED' ? `Schicht wieder frei: ${s.role} bei ${s.restaurant.name}` : `Schicht zurückgezogen: ${s.role} bei ${s.restaurant.name}`,
-        reason === 'FILLED' ? `Leider wurde die Schicht „${s.role}“ (${fmt(s.startTime)}) anderweitig besetzt. Weitere Schichten findest du hier: ${BASE()}/jobs/`
+        reason === 'DECLINED' ? `Bewerbung nicht berücksichtigt: ${s.role} bei ${s.restaurant.name}` : reason === 'FILLED' ? `Schicht besetzt: ${s.role} bei ${s.restaurant.name}` : reason === 'REOPENED' ? `Schicht wieder frei: ${s.role} bei ${s.restaurant.name}` : `Schicht zurückgezogen: ${s.role} bei ${s.restaurant.name}`,
+        reason === 'DECLINED' ? `Leider hat sich ${s.restaurant.name} für die Schicht „${s.role}“ (${fmt(s.startTime)}) gegen deine Bewerbung entschieden. Weitere Schichten findest du hier: ${BASE()}/jobs/`
+          : reason === 'FILLED' ? `Leider wurde die Schicht „${s.role}“ (${fmt(s.startTime)}) anderweitig besetzt. Weitere Schichten findest du hier: ${BASE()}/jobs/`
           : reason === 'REOPENED' ? `Gute Nachricht: Die Schicht „${s.role}“ bei ${s.restaurant.name} (${fmt(s.startTime)}) ist wieder frei. Wenn du Zeit hast, bewirb dich hier: ${BASE()}/jobs/`
           : `Der Betrieb hat die Schicht „${s.role}“ (${fmt(s.startTime)}) zurückgezogen. Weitere Schichten findest du hier: ${BASE()}/jobs/`);
   })());

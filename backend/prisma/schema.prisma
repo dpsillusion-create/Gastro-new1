@@ -88,6 +88,7 @@ model User {
   /// Zustimmung zu Nutzungsbedingungen/Datenschutz (Zeitpunkt und Version der Texte)
   termsAcceptedAt DateTime?
   termsVersion    String?
+  createdAt       DateTime  @default(now())
   memberships RestaurantMember[]
   freelancer  Freelancer?
 }
@@ -104,6 +105,9 @@ model Restaurant {
   employerBetriebsnummer String?
   /// Gesperrte Betriebe können keine Schichten ausschreiben (Missbrauchsschutz, durch Verwaltung gesetzt)
   blockedAt DateTime?
+  /// Bewertungen der Aushilfen für diesen Betrieb (Summe/Anzahl der Sterne 1–5)
+  ratingSum   Int @default(0)
+  ratingCount Int @default(0)
   apiKeys   RestaurantApiKey[]
   invitations TeamInvitation[]
 
@@ -141,6 +145,8 @@ model MarketplaceShift {
   status        ShiftStatus @default(OPEN)
   /// Bewertung (1–5) der Aushilfe durch den Wirt beim Abschluss
   rating        Int?
+  /// Bewertung (1–5) des Betriebs durch die Aushilfe nach dem Abschluss
+  restaurantRating Int?
   /// Mehrere Personen gesucht: zusammengehörige Stellen teilen eine groupId; für Aushilfen erscheint nur die erste freie Stelle
   groupId       String?
   slotIndex     Int         @default(1)

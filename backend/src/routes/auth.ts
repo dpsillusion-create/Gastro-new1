@@ -6,6 +6,7 @@ import { prisma } from '../db';
 import QRCode from 'qrcode';
 import { badRequest, conflict, forbidden, HttpError, notFound, unauthorized, wrongPassword } from '../errors';
 import { authenticate, invalidateSessions } from '../middleware/auth';
+import { anonymizeUser } from '../services/accountDeletion';
 import { geocodeAddress } from '../services/geocode';
 import { decrypt, encrypt } from '../services/crypto';
 import { checkCode, issueCode, pendingToken, readPendingToken, sessionToken, startSignupVerification } from '../services/otp';
@@ -256,8 +257,47 @@ authRouter.get('/me', authenticate, async (req, res, next) => {
   try {
     const user = await prisma.user.findUniqueOrThrow({
       where: { id: req.userId! },
-      select: { email: true, totpEnabledAt: true, isAdmin: true, memberships: { select: { role: true, restaurant: { select: { id: true, name: true, city: true } } } } },
+      select: { email: true, totpEnabledAt: true, isAdmin: true, memberships: { select: { role: true, restaurant: { select: { id: true, name: true, city: true, ratingSum: true, ratingCount: true } } } } },
     });
-    res.json({ email: user.email, totpEnabled: !!user.totpEnabledAt, isAdmin: user.isAdmin, restaurants: user.memberships.map(m => ({ ...m.restaurant, role: m.role })) });
+    res.json({ email: user.email, totpEnabled: !!user.totpEnabledAt, isAdmin: user.isAdmin,
+      restaurants: user.memberships.map(({ restaurant: { ratingSum, ratingCount, ...r }, role }) => ({ ...r, role, rating: ratingCount ? +(ratingSum / ratingCount).toFixed(1) : null, ratingCount })) });
+  } catch (err) { next(err); }
+});
+
+/**
+ * Datenauskunft für Betriebe/Manager (DSGVO): eigene Kontodaten, Betriebe und Schichten als Datei. Personenbezogene Daten
+ * der Aushilfen (SV-Nummer, Steuer-ID, Nachweise …) sind bewusst NICHT enthalten – das sind Daten Dritter.
+ */
+authRouter.post('/me/export', authenticate, rateLimit({ windowMs: 15 * 60_000, limit: Number(process.env.AUTH_RATE_LIMIT ?? 5) }), async (req, res, next) => {
+  try {
+    const { password } = z.object({ password: z.string().max(128) }).strict().parse(req.body);
+    const user = await prisma.user.findUniqueOrThrow({ where: { id: req.userId! }, include: { memberships: { include: { restaurant: true } } } });
+    if (!(await verifyPassword(password, user.passwordHash))) throw wrongPassword();
+    const ids = user.memberships.map((m) => m.restaurantId);
+    const [shifts, keys] = await Promise.all([
+      prisma.marketplaceShift.findMany({ where: { restaurantId: { in: ids } }, orderBy: { startTime: 'desc' }, take: 1000, select: { role: true, startTime: true, endTime: true, status: true, hourlyRateCents: true, slotIndex: true, slotCount: true, rating: true, restaurantRating: true, createdAt: true } }),
+      prisma.restaurantApiKey.findMany({ where: { restaurantId: { in: ids } }, select: { name: true, prefix: true, createdAt: true, lastUsedAt: true, revokedAt: true } }),
+    ]);
+    const out = {
+      erstelltAm: new Date().toISOString(),
+      hinweis: 'Alle bei GastroEvolution SmartShift Swap zu deinem Konto und deinen Betrieben gespeicherten Daten. Daten der vermittelten Aushilfen (z. B. SV-Nummer) sind als Daten Dritter nicht enthalten; Meldedaten hast du bereits über den Export je Schicht erhalten.',
+      konto: { email: user.email, telefon: user.phone, registriertAm: user.createdAt ?? null, emailBestaetigtAm: user.emailVerifiedAt, zweiFaktorPerApp: !!user.totpEnabledAt, nutzungsbedingungen: { zugestimmtAm: user.termsAcceptedAt, version: user.termsVersion } },
+      betriebe: user.memberships.map((m) => ({ rolle: m.role, name: m.restaurant.name, adresse: `${m.restaurant.street}, ${m.restaurant.zip} ${m.restaurant.city}`, betriebsnummer: m.restaurant.employerBetriebsnummer, bewertungSumme: m.restaurant.ratingSum, bewertungAnzahl: m.restaurant.ratingCount, gesperrt: !!m.restaurant.blockedAt })),
+      schichten: shifts, apiSchluessel: keys,
+    };
+    res.set({ 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', 'Content-Disposition': 'attachment; filename="meine-daten.json"' }).send(JSON.stringify(out, null, 2));
+  } catch (err) { next(err); }
+});
+
+/** Konto löschen (Betrieb/Manager). Nicht möglich, solange eine bestätigte Schicht eines eigenen Betriebs noch bevorsteht. */
+authRouter.delete('/me', authenticate, strict, async (req, res, next) => {
+  try {
+    const { password } = z.object({ password: z.string().max(128) }).strict().parse(req.body);
+    const user = await prisma.user.findUniqueOrThrow({ where: { id: req.userId! }, include: { memberships: { where: { role: 'OWNER' }, select: { restaurantId: true } } } });
+    if (!(await verifyPassword(password, user.passwordHash))) throw wrongPassword();
+    if (await prisma.temporaryEmployee.count({ where: { restaurantId: { in: user.memberships.map((m) => m.restaurantId) }, validUntil: { gt: new Date() }, shift: { status: 'MATCHED' } } }))
+      throw conflict('Es gibt noch bestätigte Schichten. Bitte erst absolvieren oder absagen, dann kann das Konto gelöscht werden.');
+    await anonymizeUser(user.id);
+    res.status(204).end();
   } catch (err) { next(err); }
 });

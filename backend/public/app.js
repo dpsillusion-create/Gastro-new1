@@ -187,6 +187,10 @@ async function renderApplicants(box, shift) {
     box.append(el('div', { class: 'applicant' },
       el('div', {}, el('strong', {}, a.displayName), el('div', { class: 'meta' }, `${stars} · ${a.verifiedSkills.join(', ')}`),
         el('div', { class: 'meta' }, a.hygieneIssuedOn ? `Hygiene-Belehrung ✓ ausgestellt am ${new Date(a.hygieneIssuedOn).toLocaleDateString('de-DE')}` : 'Kein Hygienenachweis')),
+      el('button', { class: 'secondary', onclick: (ev) => busy(ev.target, async () => {
+        if (!confirm(`Bewerbung von ${a.displayName} ablehnen? Die Aushilfe wird informiert.`)) throw new Error('Abgebrochen');
+        await api(`/marketplace/shifts/${shift.id}/reject`, { method: 'POST', body: { freelancerId: a.id } }); await loadShifts();
+      }) }, 'Ablehnen'),
       el('button', { class: 'btn accent', onclick: (ev) => busy(ev.target, async () => {
         await api(`/marketplace/shifts/${shift.id}/accept`, { method: 'POST', body: { freelancerId: a.id } });
         show(`${a.displayName} ist bestätigt und im Dienstplan eingetragen.`, true); await loadShifts();
@@ -312,6 +316,7 @@ async function start() {
   if (!r && !me.isAdmin) { logout(); show('Für dieses Konto ist kein Betrieb hinterlegt.'); return; }
   state.restaurantId = r ? r.id : null; state.role = r ? r.role : 'OWNER';
   $('restaurantName').textContent = r ? `${r.name} · ${me.email}` : me.email;
+  $('myRating').textContent = r && r.rating ? `Bewertung durch Aushilfen: ★ ${r.rating.toLocaleString('de-DE')} (${r.ratingCount})` : 'Noch keine Bewertungen durch Aushilfen.';
   if (!r) return openAdmin().catch((e) => show(e.message));
   view('dash');
   const owner = state.role === 'OWNER';
@@ -319,8 +324,31 @@ async function start() {
   $('shiftForm').closest('.card').hidden = !owner; $('integrations').hidden = !owner; $('team').hidden = !owner;
   TotpUI.mount($('security'), { api, show, enabled: me.totpEnabled, onChange: () => start() });
   PushUI.mount($('push'), { api, show, swScope: '/app/' });
+  renderAccount();
   if (owner) { renderIntegrations(); renderTeam(); }
   await loadShifts();
+}
+
+// ---- Konto: Datenauskunft und Löschen ----
+function renderAccount() {
+  const box = $('account'), pw = () => el('input', { type: 'password', autocomplete: 'current-password', required: '', placeholder: 'Passwort zur Bestätigung' });
+  const p1 = pw(), p2 = pw();
+  const f1 = el('form', { class: 'form', hidden: '' }, p1, el('button', { class: 'btn ghost' }, 'Datei herunterladen'));
+  f1.addEventListener('submit', (e) => { e.preventDefault(); busy(e.submitter, async () => {
+    const data = await api('/auth/me/export', { method: 'POST', body: { password: p1.value } });
+    const a = el('a', { href: URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })), download: 'meine-daten.json' }); a.click(); URL.revokeObjectURL(a.href);
+    f1.reset(); f1.hidden = true; show('Ihre Daten wurden heruntergeladen (meine-daten.json).', true);
+  }); });
+  const f2 = el('form', { class: 'form', hidden: '' }, p2, el('button', { class: 'btn ghost danger' }, 'Konto endgültig löschen'));
+  f2.addEventListener('submit', (e) => { e.preventDefault(); busy(e.submitter, async () => {
+    if (!confirm('Konto wirklich endgültig löschen? Offene Schichten werden zurückgezogen, der Betrieb wird gesperrt. Das kann nicht rückgängig gemacht werden.')) throw new Error('Abgebrochen');
+    await api('/auth/me', { method: 'DELETE', body: { password: p2.value } }); logout(); show('Ihr Konto wurde gelöscht.', true);
+  }); });
+  box.replaceChildren(el('h2', {}, 'Konto und Daten'),
+    el('p', { class: 'hint' }, 'Auf Wunsch erhalten Sie alle zu Ihrem Konto gespeicherten Daten als Datei. Daten der vermittelten Aushilfen (z. B. SV-Nummern) sind als Daten Dritter nicht enthalten.'),
+    el('button', { class: 'link', type: 'button', onclick: () => { f1.hidden = !f1.hidden; } }, 'Meine Daten herunterladen …'), f1,
+    el('p', { class: 'hint' }, 'Sie können Ihr Konto löschen, solange keine bestätigte Schicht aussteht. Gesetzlich aufbewahrungspflichtige Melde- und Einsatzdaten bleiben erhalten.'),
+    el('button', { class: 'link danger', type: 'button', onclick: () => { f2.hidden = !f2.hidden; } }, 'Konto löschen …'), f2);
 }
 
 // ---- Team: Manager einladen (nur Inhaber) ----
@@ -413,7 +441,7 @@ async function loadAdmin(tabName) {
     const list = await api('/admin/restaurants?q=' + q);
     if (!list.length) body.append(el('p', { class: 'hint' }, 'Keine Treffer.'));
     for (const r of list) body.append(el('article', { class: 'shift' },
-      el('header', {}, el('div', {}, el('h3', {}, r.name), el('div', { class: 'meta' }, `${r.zip} ${r.city} · Betriebsnr. ${r.betriebsnummer || '–'} · ${r.owners.join(', ')}`)),
+      el('header', {}, el('div', {}, el('h3', {}, r.name), el('div', { class: 'meta' }, `${r.zip} ${r.city} · Betriebsnr. ${r.betriebsnummer || '–'} · ${r.owners.join(', ')}${r.rating ? ` · ★ ${r.rating} (${r.ratingCount})` : ''}`)),
         el('span', { class: 'pill ' + (r.blockedAt ? 'warn' : 'ok') }, r.blockedAt ? 'gesperrt' : 'aktiv')),
       el('div', { class: 'kvline' }, el('span', {}, `${r.shifts} Schichten`)),
       el('div', { class: 'actions' }, r.blockedAt ? act('Entsperren', () => post(`/restaurants/${r.id}/unblock`))

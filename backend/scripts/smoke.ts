@@ -11,6 +11,7 @@ import { totpCode } from '../src/services/totp';
 import { hashPassword } from '../src/services/password';
 import { remindAttendance, sweepNoShows } from '../src/services/reliability';
 import { remindSofortmeldung } from '../src/services/sofortmeldung';
+import { cleanupOldData, expireOpenShifts } from '../src/services/maintenance';
 import { readFileSync } from 'fs';
 
 const prisma = new PrismaClient();
@@ -313,6 +314,22 @@ async function main() {
   const after = await fauth('GET', '/api/v1/freelancers/me');
   check('Aushilfe hat Bewertung 4.0 (1)', after.json?.rating === 4 && after.json?.ratingCount === 1, after.json);
 
+  console.log('— Bewertung des Betriebs durch die Aushilfe');
+  const rateR = (id: string, user: string, rating: number) => api('POST', `/api/v1/marketplace/shifts/${id}/rate-restaurant`, user, { rating });
+  check('Bewerten vor Abschluss der Schicht → 409', (await rateR(shiftId, fu!.id, 5)).status === 409);
+  check('Bewerten durch eine andere Aushilfe → 404', (await rateR(shift2.json.id, fu!.id, 5)).status === 404);
+  const tokFreg = fr.json.token as string;
+  const rateF = async (rating: number) => (await fauth('POST', `/api/v1/marketplace/shifts/${shift2.json.id}/rate-restaurant`, { rating })).status;
+  check('Bewertung 6 → 400', (await rateF(6)) === 400);
+  check('Aushilfe bewertet den Betrieb mit 5 Sternen → 204', (await rateF(5)) === 204);
+  check('zweite Bewertung derselben Schicht → 409', (await rateF(1)) === 409);
+  const meO = await api('GET', '/api/v1/auth/me', owner!.id);
+  check('Betrieb hat jetzt Bewertung 5.0 (1)', meO.json?.restaurants?.[0]?.rating === 5 && meO.json.restaurants[0].ratingCount === 1, meO.json?.restaurants);
+  await api('POST', '/api/v1/marketplace/shifts', owner!.id, { ...good, startTime: new Date(Date.now() + 70 * 3600_000).toISOString(), endTime: new Date(Date.now() + 78 * 3600_000).toISOString() });
+  const srch = await fauth('GET', '/api/v1/marketplace/search');
+  check('Bewertung des Betriebs erscheint in der Suche der Aushilfen', srch.json?.shifts?.some((x: { restaurantRating: number | null }) => x.restaurantRating === 5), srch.json?.shifts?.map((x: { restaurantRating: unknown }) => x.restaurantRating));
+  void tokFreg;
+
   console.log('— No-Show');
   await movePast(shiftId, 30, 480); // vor 30 Min. begonnen, kein Check-in
   const ns0 = await sweepNoShows();
@@ -541,6 +558,27 @@ async function main() {
   check('Abmelden durch einen anderen Nutzer löscht nichts', (await api('POST', '/api/v1/push/unsubscribe', stranger!.id, { endpoint: sub.endpoint })).status === 204 && (await prisma.pushSubscription.count({ where: { endpoint: sub.endpoint } })) === 1);
   check('Abmelden durch den Besitzer → Gerät entfernt', (await api('POST', '/api/v1/push/unsubscribe', owner!.id, { endpoint: sub.endpoint })).status === 204 && (await prisma.pushSubscription.count({ where: { endpoint: sub.endpoint } })) === 0);
 
+  console.log('— Bewerber ablehnen');
+  const fr1 = await mkF('wird-abgelehnt'), fr2 = await mkF('wird-bestaetigt');
+  const shR = (await api('POST', '/api/v1/marketplace/shifts', owner!.id, { ...good, startTime: new Date(Date.now() + 60 * 3600_000).toISOString(), endTime: new Date(Date.now() + 68 * 3600_000).toISOString() })).json.id as string;
+  await prisma.shiftApplication.createMany({ data: [{ shiftId: shR, freelancerId: fr1.id }, { shiftId: shR, freelancerId: fr2.id }] });
+  const rej = (user: string, fid: string) => api('POST', `/api/v1/marketplace/shifts/${shR}/reject`, user, { freelancerId: fid });
+  const outsider = await prisma.user.create({ data: { email: 'unbeteiligt@smoketest.invalid', emailVerifiedAt: new Date() } });
+  check('Ablehnen durch Unbeteiligte → 403', (await rej(outsider.id, fr1.id)).status === 403);
+  check('Wirt lehnt Bewerber ab → 204', (await rej(owner!.id, fr1.id)).status === 204);
+  check('Bewerbung ist abgelehnt, die Aushilfe wird informiert', (await prisma.shiftApplication.findFirstOrThrow({ where: { shiftId: shR, freelancerId: fr1.id } })).status === 'REJECTED' && await mailSent('wird-abgelehnt@smoketest.invalid', 'Bewerbung nicht berücksichtigt'));
+  check('nochmal ablehnen → 404', (await rej(owner!.id, fr1.id)).status === 404);
+  check('der andere Bewerber kann weiter bestätigt werden', (await api('POST', `/api/v1/marketplace/shifts/${shR}/accept`, owner!.id, { freelancerId: fr2.id })).status === 200);
+
+  console.log('— Aufräumen');
+  const oldShift = await prisma.marketplaceShift.create({ data: { restaurantId: rid, role: 'Barkeeper', requiredSkill: 'BAR', hourlyRateCents: 1900, startTime: new Date(Date.now() - 3 * 3600_000), endTime: new Date(Date.now() + 3600_000), latitude: 53.55, longitude: 9.99, createdById: owner!.id } });
+  const fx1 = await mkF('bewirbt-sich-auf-altes');
+  await prisma.shiftApplication.create({ data: { shiftId: oldShift.id, freelancerId: fx1.id } });
+  check('abgelaufene offene Schichten werden automatisch abgesagt', (await expireOpenShifts()) >= 1 && (await prisma.marketplaceShift.findUniqueOrThrow({ where: { id: oldShift.id } })).status === 'CANCELLED' && (await prisma.shiftApplication.findFirstOrThrow({ where: { shiftId: oldShift.id } })).status === 'WITHDRAWN');
+  await prisma.otpChallenge.create({ data: { id: 'aa'.repeat(16), userId: owner!.id, purpose: 'LOGIN', channel: 'EMAIL', codeHash: 'x', expiresAt: new Date(), createdAt: new Date(Date.now() - 3 * 86_400_000) } });
+  const cl = await cleanupOldData();
+  check('alte Codes werden gelöscht, aktuelle bleiben', cl.otp >= 1 && (await prisma.otpChallenge.count({ where: { id: 'aa'.repeat(16) } })) === 0);
+
   console.log('— Verwaltung');
   const adminNoTotp = await prisma.user.create({ data: { email: 'admin-ohne-2fa@smoketest.invalid', emailVerifiedAt: new Date(), isAdmin: true } });
   check('Verwaltung ohne Authenticator-App → 403', (await api('GET', '/api/v1/admin/stats', adminNoTotp.id)).status === 403);
@@ -571,6 +609,19 @@ async function main() {
   const ex = await fauth('POST', '/api/v1/freelancers/me/export', { password: freg.password });
   check('Export liefert die eigenen Daten (inkl. SV-Nummer, Steuer-ID, Nachweis, Bewerbungen)', ex.status === 200 && ex.json?.profil?.sozialversicherungsnummer === '15070649C103' && ex.json.profil.steuerId === '86095742719' && !!ex.json.hygienenachweis && ex.json.bewerbungen.length >= 1 && ex.json.konto.email === freg.email, ex.json && Object.keys(ex.json));
   check('Export enthält keine Zugangsdaten', !JSON.stringify(ex.json).match(/passwordHash|scrypt\$|totpSecret/));
+
+  console.log('— Datenauskunft und Kontolöschung für Betriebe');
+  const wrongW = await authed('POST', '/api/v1/auth/me/export', { password: 'falsch-falsch-falsch' });
+  check('Export mit falschem Passwort → 401 (WRONG_PASSWORD), Sitzung bleibt gültig', wrongW.status === 401 && wrongW.json?.error === 'WRONG_PASSWORD' && (await authed('GET', '/api/v1/auth/me')).status === 200, wrongW);
+  const exW = await authed('POST', '/api/v1/auth/me/export', { password: reg.password });
+  check('Export enthält Konto, Betrieb und Schichten – ohne Daten Dritter', exW.status === 200 && exW.json?.konto?.email === reg.email && exW.json.betriebe?.[0]?.betriebsnummer === '12345678' && Array.isArray(exW.json.schichten) && !JSON.stringify(exW.json).match(/sozialversicherung|steuerId|15070649/), exW.json && Object.keys(exW.json));
+  await prisma.user.update({ where: { id: owner!.id }, data: { passwordHash: await hashPassword('owner-passwort-123') } });
+  check('Konto löschen mit bestätigten Schichten → 409', (await api('DELETE', '/api/v1/auth/me', owner!.id, { password: 'owner-passwort-123' })).status === 409);
+  check('Konto löschen mit falschem Passwort → 401', (await authed('DELETE', '/api/v1/auth/me', { password: 'falsch-falsch-falsch' })).status === 401);
+  const delW = await authed('DELETE', '/api/v1/auth/me', { password: reg.password });
+  check('Betrieb ohne bestätigte Schichten löscht sein Konto → 204', delW.status === 204, delW);
+  const wu = await prisma.user.findUniqueOrThrow({ where: { email: 'neu@smoketest.invalid' } }).catch(() => null);
+  check('Konto anonymisiert, Betrieb gesperrt, alte Sitzung ungültig', !wu && (await authed('GET', '/api/v1/auth/me')).status === 401 && (await prisma.restaurant.count({ where: { name: 'Smoketest Restaurant', blockedAt: { not: null } } })) >= 1);
 
   console.log('— Konto löschen (DSGVO)');
   check('Konto löschen mit falschem Passwort → 401', (await fauth('DELETE', '/api/v1/freelancers/me', { password: 'falsch-falsch-falsch' })).status === 401);

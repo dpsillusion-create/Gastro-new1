@@ -43,6 +43,7 @@ export async function searchShifts(i: SearchInput) {
     SELECT * FROM (
       SELECT s.id, s.role, s."requiredSkill", s.requirements, s."hourlyRateCents",
              s."startTime", s."endTime", r.name AS "restaurantName", r.city, s."slotCount",
+             CASE WHEN r."ratingCount" > 0 THEN round(r."ratingSum"::numeric / r."ratingCount", 1)::float END AS "restaurantRating", r."ratingCount" AS "restaurantRatingCount",
              CASE WHEN s."groupId" IS NULL THEN 1 ELSE (SELECT count(*)::int FROM "MarketplaceShift" g WHERE g."groupId" = s."groupId" AND g.status = 'OPEN' AND g."startTime" > now()) END AS "openSlots",
              6371.0088 * 2 * asin(least(1, sqrt(
                power(sin(radians(s.latitude - ${i.lat}) / 2), 2) +
@@ -177,4 +178,28 @@ export async function completeShift(userId: string, shiftId: string, rating: num
     if (r.count !== 1) throw conflict('Schicht wurde bereits abgeschlossen');
     await tx.freelancer.update({ where: { id: temp.freelancerId }, data: { ratingSum: { increment: rating }, ratingCount: { increment: 1 } } });
   });
+}
+
+/** Die zugesagte Aushilfe bewertet den Betrieb (1–5) – einmalig, erst nach abgeschlossener Schicht. */
+export async function rateRestaurant(userId: string, shiftId: string, rating: number) {
+  const f = await prisma.freelancer.findUnique({ where: { userId }, select: { id: true } });
+  if (!f) throw forbidden('Kein Freelancer-Profil');
+  await prisma.$transaction(async (tx) => {
+    const shift = await tx.marketplaceShift.findUnique({ where: { id: shiftId }, select: { restaurantId: true, status: true, assignment: { select: { freelancerId: true } } } });
+    if (!shift || shift.assignment?.freelancerId !== f.id) throw notFound('Keine Schicht von dir gefunden');
+    if (shift.status !== 'COMPLETED') throw conflict('Bewerten ist erst nach Abschluss der Schicht möglich');
+    const r = await tx.marketplaceShift.updateMany({ where: { id: shiftId, status: 'COMPLETED', restaurantRating: null }, data: { restaurantRating: rating } });
+    if (r.count !== 1) throw conflict('Du hast diesen Betrieb für diese Schicht bereits bewertet');
+    await tx.restaurant.update({ where: { id: shift.restaurantId }, data: { ratingSum: { increment: rating }, ratingCount: { increment: 1 } } });
+  });
+}
+
+/** Der Betrieb lehnt einen Bewerber ab (ohne jemand anderen zu bestätigen); die Aushilfe wird informiert. */
+export async function rejectApplication(userId: string, shiftId: string, freelancerId: string) {
+  const shift = await prisma.marketplaceShift.findUnique({ where: { id: shiftId }, select: { restaurantId: true, status: true } });
+  if (!shift) throw notFound('Schicht nicht gefunden');
+  await assertRestaurantManager(userId, shift.restaurantId);
+  const r = await prisma.shiftApplication.updateMany({ where: { shiftId, freelancerId, status: 'PENDING' }, data: { status: 'REJECTED', decidedAt: new Date() } });
+  if (r.count !== 1) throw notFound('Keine offene Bewerbung');
+  notifyNotSelected(shiftId, [freelancerId], 'DECLINED');
 }

@@ -27,6 +27,7 @@ export async function anonymizeUser(userId: string) {
       await tx.restaurant.update({ where: { id: m.restaurantId }, data: { blockedAt: now } });
       await tx.restaurantApiKey.updateMany({ where: { restaurantId: m.restaurantId, revokedAt: null }, data: { revokedAt: now } });
     }
+    await tx.restaurantMember.deleteMany({ where: { userId, role: 'MANAGER' } }); // Manager verlassen das Team
     await tx.otpChallenge.deleteMany({ where: { userId } });
     await tx.user.update({ where: { id: userId }, data: {
       email: `geloescht-${userId}@deleted.invalid`, phone: null, passwordHash: null, totpSecretEnc: null, totpEnabledAt: null,

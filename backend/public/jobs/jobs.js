@@ -162,7 +162,7 @@ function shiftCard(s, top) {
   const c = el('div', { class: 'swipe' + (top ? '' : ' next') },
     el('span', { class: 'pill dist' }, `${Number(s.distanceKm).toLocaleString('de-DE', { maximumFractionDigits: 1 })} km`),
     el('div', { class: 'stampyes' }, 'INTERESSE'), el('div', { class: 'stampno' }, 'NEIN'),
-    el('div', { class: 'role' }, s.role), el('div', { class: 'where' }, `${s.restaurantName} · ${s.city}${s.openSlots > 1 ? ` · ${s.openSlots} Plätze frei` : ''}`),
+    el('div', { class: 'role' }, s.role), el('div', { class: 'where' }, `${s.restaurantName} · ${s.city}${s.restaurantRating ? ` · ★ ${s.restaurantRating.toLocaleString('de-DE')} (${s.restaurantRatingCount})` : ''}${s.openSlots > 1 ? ` · ${s.openSlots} Plätze frei` : ''}`),
     el('div', { class: 'rate' }, `${euro(s.hourlyRateCents)}/Std.`),
     el('div', { class: 'est' }, `≈ ${euro(Math.round(hours * s.hourlyRateCents))} brutto für ${hours.toLocaleString('de-DE', { maximumFractionDigits: 1 })} Std.`),
     el('div', { class: 'when' }, `${fmtTime(s.startTime)} – ${new Date(s.endTime).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })} Uhr`),
@@ -256,12 +256,20 @@ function renderApps() {
     const r = s.restaurant;
     const c = el('article', { class: 'app' },
       el('header', {}, el('div', {}, el('h3', {}, `${s.role} · ${euro(s.hourlyRateCents)}/Std.`),
-        el('div', { class: 'meta' }, `${r.name} · ${r.city}`), el('div', { class: 'meta' }, `${fmtTime(s.startTime)} – ${new Date(s.endTime).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })} Uhr`)),
+        el('div', { class: 'meta' }, `${r.name} · ${r.city}${r.rating ? ` · ★ ${r.rating.toLocaleString('de-DE')} (${r.ratingCount})` : ''}`), el('div', { class: 'meta' }, `${fmtTime(s.startTime)} – ${new Date(s.endTime).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })} Uhr`)),
         el('span', { class: 'pill ' + status }, status === 'ACCEPTED' && s.status === 'COMPLETED' ? 'Abgeschlossen' : (APP_LABEL[status] || status))));
     if (status === 'ACCEPTED' && r.street) {
       c.append(el('div', { class: 'addr' }, `📍 ${r.street}, ${r.zip} ${r.city}`),
         el('p', { class: 'hint' }, 'Bitte pünktlich sein und vor Ort am Zeiterfassungsterminal einchecken.'),
         el('a', { class: 'btn ghost small', target: '_blank', rel: 'noopener', href: 'https://www.openstreetmap.org/search?query=' + encodeURIComponent(`${r.street}, ${r.zip} ${r.city}`) }, 'Route öffnen'));
+    }
+    if (status === 'ACCEPTED' && s.status === 'COMPLETED') { // Betrieb bewerten (einmalig)
+      if (s.restaurantRating) c.append(el('div', { class: 'meta' }, `Deine Bewertung: ${'★'.repeat(s.restaurantRating)}${'☆'.repeat(5 - s.restaurantRating)}`));
+      else {
+        const row = el('div', { class: 'actions' }, el('span', { class: 'meta' }, 'Wie war der Betrieb?'));
+        for (let n = 1; n <= 5; n++) row.append(el('button', { class: 'secondary', onclick: (ev) => busy(ev.target, async () => { await api(`/marketplace/shifts/${s.id}/rate-restaurant`, { method: 'POST', body: { rating: n } }); show('Danke für deine Bewertung!', true); await loadApps(); }) }, '★'.repeat(n)));
+        c.append(row);
+      }
     }
     if (status === 'ACCEPTED' && s.status === 'MATCHED' && new Date(s.startTime) > new Date()) {
       const hours = (new Date(s.startTime) - Date.now()) / 3.6e6;

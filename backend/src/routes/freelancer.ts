@@ -93,13 +93,14 @@ freelancerRouter.get('/me/applications', async (req, res, next) => {
     const apps = await prisma.shiftApplication.findMany({
       where: { freelancerId: f.id, status: { not: 'WITHDRAWN' } }, orderBy: { createdAt: 'desc' }, take: 50,
       select: { status: true, shift: { select: {
-        id: true, role: true, requirements: true, hourlyRateCents: true, startTime: true, endTime: true, status: true,
-        restaurant: { select: { name: true, city: true, street: true, zip: true } },
+        id: true, role: true, requirements: true, hourlyRateCents: true, startTime: true, endTime: true, status: true, restaurantRating: true,
+        restaurant: { select: { name: true, city: true, street: true, zip: true, ratingSum: true, ratingCount: true } },
       } } },
     });
     res.json(apps.map(({ status, shift }) => {
-      const { street, zip, ...rest } = shift.restaurant;
-      return { status, shift: { ...shift, restaurant: status === 'ACCEPTED' ? { ...rest, street, zip } : rest } };
+      const { street, zip, ratingSum, ratingCount, ...rest } = shift.restaurant;
+      const r = { ...rest, rating: ratingCount ? +(ratingSum / ratingCount).toFixed(1) : null, ratingCount };
+      return { status, shift: { ...shift, restaurant: status === 'ACCEPTED' ? { ...r, street, zip } : r } };
     }));
   } catch (err) { next(err); }
 });

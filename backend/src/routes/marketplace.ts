@@ -248,3 +248,20 @@ marketplaceRouter.post('/shifts/:id/cancel-match', async (req, res, next) => {
     res.json(await cancelByRestaurant(uid(req), idParam.parse(req.params.id), b.reopen, b.reason));
   } catch (err) { next(err); }
 });
+
+/** Aushilfe bewertet den Betrieb nach abgeschlossener Schicht (1–5 Sterne, einmalig). */
+marketplaceRouter.post('/shifts/:id/rate-restaurant', async (req, res, next) => {
+  try {
+    const { rating } = z.object({ rating: z.number().int().min(1).max(5) }).strict().parse(req.body);
+    await svc.rateRestaurant(uid(req), idParam.parse(req.params.id), rating);
+    res.status(204).end();
+  } catch (err) { next(err); }
+});
+/** Betrieb lehnt einen Bewerber ab. */
+marketplaceRouter.post('/shifts/:id/reject', async (req, res, next) => {
+  try {
+    const { freelancerId } = z.object({ freelancerId: z.string().uuid() }).strict().parse(req.body);
+    await svc.rejectApplication(uid(req), idParam.parse(req.params.id), freelancerId);
+    res.status(204).end();
+  } catch (err) { next(err); }
+});

@@ -87,7 +87,7 @@ adminRouter.get('/restaurants', async (req, res, next) => {
       include: { members: { where: { role: 'OWNER' }, include: { user: { select: { email: true } } } }, _count: { select: { shifts: true } } },
     });
     res.json(list.map((r) => ({ id: r.id, name: r.name, city: r.city, zip: r.zip, betriebsnummer: r.employerBetriebsnummer, blockedAt: r.blockedAt,
-      owners: r.members.map((m) => m.user.email), shifts: r._count.shifts })));
+      owners: r.members.map((m) => m.user.email), shifts: r._count.shifts, rating: r.ratingCount ? +(r.ratingSum / r.ratingCount).toFixed(1) : null, ratingCount: r.ratingCount })));
   } catch (e) { next(e); }
 });
 
