@@ -32,7 +32,7 @@ async function api(path, { method = 'GET', body } = {}) {
   try { data = await res.json(); } catch { /* leere Antwort */ }
   if (res.status === 401 && store.get()) { logout(); throw new Error('Sitzung abgelaufen – bitte erneut anmelden'); }
   if (res.status === 429) throw new Error('Zu viele Anfragen – bitte kurz warten');
-  if (!res.ok) throw new Error(errorText(data));
+  if (!res.ok) { const err = new Error(errorText(data)); err.body = data; throw err; }
   return data;
 }
 async function busy(btn, fn) {
@@ -42,7 +42,7 @@ async function busy(btn, fn) {
 
 // ---- Anmeldung ----
 function view(name) {
-  $('landing').hidden = name !== 'landing'; $('auth').hidden = name !== 'auth'; $('dash').hidden = name !== 'dash';
+  $('landing').hidden = name !== 'landing'; $('auth').hidden = name !== 'auth'; $('verify').hidden = name !== 'verify'; $('dash').hidden = name !== 'dash';
   const guest = name !== 'dash';
   $('guestbox').hidden = !guest; $('userbox').hidden = guest; $('nav').hidden = !guest;
   window.scrollTo({ top: 0 });
@@ -63,13 +63,59 @@ $('tabLogin').onclick = () => tab(true);
 $('tabRegister').onclick = () => tab(false);
 $('logout').onclick = logout;
 $('loginForm').addEventListener('submit', (e) => {
-  e.preventDefault();
-  busy(e.submitter, async () => { store.set((await api('/auth/login', { method: 'POST', body: formData(e.target) })).token); await start(); });
+  e.preventDefault(); const f = formData(e.target);
+  busy(e.submitter, async () => {
+    try {
+      const r = await api('/auth/login', { method: 'POST', body: f });
+      openVerify('login', r.challengeToken, r.phoneHint);
+    } catch (err) {
+      if (err.body && err.body.error === 'NOT_VERIFIED') { openVerify('signup', err.body.verificationToken); show('Bitte bestätige zuerst E-Mail und Handynummer – wir haben dir neue Codes geschickt.', true); return; }
+      throw err;
+    }
+  });
 });
 $('registerForm').addEventListener('submit', (e) => {
   e.preventDefault();
-  busy(e.submitter, async () => { store.set((await api('/auth/register', { method: 'POST', body: formData(e.target) })).token); await start(); });
+  busy(e.submitter, async () => { const r = await api('/auth/register', { method: 'POST', body: formData(e.target) }); openVerify('signup', r.verificationToken); });
 });
+async function onSession(token) { store.set(token); await start(); }
+
+// ---- Bestätigungscodes (Registrierung) bzw. zweiter Faktor (Anmeldung) ----
+const pending = { mode: null, token: null };
+function setVerifyRows(emailRow, phoneRow, loginRow) {
+  const f = $('verifyForm').elements;
+  $('emailCodeRow').hidden = !emailRow; $('phoneCodeRow').hidden = !phoneRow; $('loginCodeRow').hidden = !loginRow;
+  f.emailCode.required = emailRow; f.phoneCode.required = phoneRow; f.code.required = loginRow;
+}
+function openVerify(mode, token, hint) {
+  pending.mode = mode; pending.token = token; view('verify'); show('');
+  const signup = mode === 'signup';
+  $('verifyForm').reset(); setVerifyRows(signup, signup, !signup);
+  $('verifyTitle').textContent = signup ? 'Konto bestätigen' : 'Sicherheitscode';
+  $('verifyText').textContent = signup
+    ? 'Wir haben dir einen Code per E-Mail und einen per SMS geschickt. Bitte gib beide ein.'
+    : `Zur Sicherheit haben wir dir einen Code per SMS geschickt${hint ? ' (' + hint + ')' : ''}.`;
+  $('resendMail').textContent = signup ? 'Code per E-Mail erneut senden' : 'Code stattdessen per E-Mail senden';
+  $('resendSms').textContent = 'Code per SMS erneut senden';
+}
+$('verifyForm').addEventListener('submit', (e) => {
+  e.preventDefault(); const f = formData(e.target);
+  busy(e.submitter, async () => {
+    try {
+      const r = pending.mode === 'signup'
+        ? await api('/auth/verify', { method: 'POST', body: { verificationToken: pending.token, ...(f.emailCode ? { emailCode: f.emailCode } : {}), ...(f.phoneCode ? { phoneCode: f.phoneCode } : {}) } })
+        : await api('/auth/login/verify', { method: 'POST', body: { challengeToken: pending.token, code: f.code } });
+      await onSession(r.token);
+    } catch (err) {
+      // schon bestätigte Codes ausblenden, damit nur noch der fehlende eingegeben werden muss
+      if (err.body && err.body.error === 'CODE_INVALID') setVerifyRows(!err.body.emailVerified, !err.body.phoneVerified, false);
+      throw err;
+    }
+  });
+});
+const resend = (channel) => async () => { await api('/auth/resend', { method: 'POST', body: { token: pending.token, purpose: pending.mode, channel } }); show('Neuer Code wurde gesendet.', true); };
+$('resendSms').onclick = (e) => busy(e.target, resend('SMS'));
+$('resendMail').onclick = (e) => busy(e.target, resend('EMAIL'));
 
 // ---- Schichten ----
 const fmt = (iso) => new Date(iso).toLocaleString('de-DE', { weekday: 'short', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
@@ -101,7 +147,8 @@ async function renderApplicants(box, shift) {
   for (const a of list) {
     const stars = a.rating ? `★ ${a.rating} (${a.ratingCount})` : 'noch keine Bewertung';
     box.append(el('div', { class: 'applicant' },
-      el('div', {}, el('strong', {}, a.displayName), el('div', { class: 'meta' }, `${stars} · ${a.verifiedSkills.join(', ')}`)),
+      el('div', {}, el('strong', {}, a.displayName), el('div', { class: 'meta' }, `${stars} · ${a.verifiedSkills.join(', ')}`),
+        el('div', { class: 'meta' }, a.hygieneIssuedOn ? `Hygiene-Belehrung ✓ ausgestellt am ${new Date(a.hygieneIssuedOn).toLocaleDateString('de-DE')}` : 'Kein Hygienenachweis')),
       el('button', { class: 'btn accent', onclick: (ev) => busy(ev.target, async () => {
         await api(`/marketplace/shifts/${shift.id}/accept`, { method: 'POST', body: { freelancerId: a.id } });
         show(`${a.displayName} ist bestätigt und im Dienstplan eingetragen.`, true); await loadShifts();
@@ -109,10 +156,21 @@ async function renderApplicants(box, shift) {
   }
 }
 
+// Hygienenachweis der zugesagten Aushilfe (Nachweispflicht des Arbeitgebers) in neuem Tab öffnen
+async function openCertificate(shiftId) {
+  const w = window.open('', '_blank'); // vor dem await öffnen, sonst blockt der Browser das Pop-up
+  try {
+    const res = await fetch(`${API}/marketplace/shifts/${shiftId}/hygiene-certificate`, { headers: { authorization: 'Bearer ' + store.get() } });
+    if (!res.ok) throw new Error(errorText(await res.json().catch(() => null)));
+    if (w) w.location = URL.createObjectURL(await res.blob());
+  } catch (e) { if (w) w.close(); throw e; }
+}
+
 // Anwesenheit und Bewertung nach der Schicht
 function matchedControls(s) {
   const a = s.assignment, now = Date.now(), start = new Date(s.startTime).getTime(), end = new Date(s.endTime).getTime();
-  const box = el('div', { class: 'applicants' }, el('div', { class: 'meta' }, `Aushilfe: ${a.freelancer.displayName}`));
+  const box = el('div', { class: 'applicants' }, el('div', { class: 'meta' }, `Aushilfe: ${a.freelancer.displayName}`),
+    el('div', { class: 'actions' }, el('button', { class: 'secondary', onclick: (ev) => busy(ev.target, () => openCertificate(s.id)) }, 'Hygienenachweis ansehen')));
   const act = (label, fn, cls = 'secondary') => el('button', { class: cls, onclick: (ev) => busy(ev.target, async () => { await fn(); await loadShifts(); }) }, label);
   if (a.noShowRecordedAt) box.append(el('div', { class: 'meta' }, 'Nicht erschienen – die Aushilfe wurde gesperrt.'));
   else if (!a.clockedInAt) {

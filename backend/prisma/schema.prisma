@@ -35,6 +35,16 @@ enum AccountStatus {
   SUSPENDED
 }
 
+enum OtpPurpose {
+  SIGNUP
+  LOGIN
+}
+
+enum OtpChannel {
+  EMAIL
+  SMS
+}
+
 enum MemberRole {
   OWNER
   MANAGER
@@ -46,6 +56,11 @@ model User {
   email       String             @unique
   /// scrypt-Hash; leer für Nutzer, die sich über das bestehende GastroEvolution-Login anmelden
   passwordHash String?
+  /// Handynummer im E.164-Format (eindeutig: eine Nummer = ein Konto)
+  phone           String?   @unique
+  emailVerifiedAt DateTime?
+  phoneVerifiedAt DateTime?
+  otpChallenges   OtpChallenge[]
   memberships RestaurantMember[]
   freelancer  Freelancer?
 }
@@ -143,6 +158,19 @@ model Freelancer {
   user          User                @relation(fields: [userId], references: [id], onDelete: Cascade)
   applications  ShiftApplication[]
   tempEmployees TemporaryEmployee[]
+  hygieneCertificate HygieneCertificate?
+}
+
+/// Nachweis der Belehrung nach § 43 Infektionsschutzgesetz (Foto/PDF), AES-256-GCM verschlüsselt.
+/// Wirte sehen vorab nur „vorhanden + Ausstellungsdatum“; das Dokument erst nach der Zusage (Nachweispflicht des Arbeitgebers).
+model HygieneCertificate {
+  id           String     @id @default(uuid())
+  freelancerId String     @unique
+  mimeType     String
+  dataEnc      Bytes
+  issuedOn     DateTime   @db.Date
+  uploadedAt   DateTime   @default(now())
+  freelancer   Freelancer @relation(fields: [freelancerId], references: [id], onDelete: Cascade)
 }
 
 model ShiftApplication {
@@ -231,4 +259,20 @@ model WebhookEvent {
   createdAt   DateTime  @default(now())
 
   @@index([deliveredAt, createdAt])
+}
+
+/// Einmalcodes für Kontobestätigung und Zwei-Faktor-Anmeldung. Codes werden nur als HMAC gespeichert.
+model OtpChallenge {
+  id         String     @id
+  userId     String
+  purpose    OtpPurpose
+  channel    OtpChannel
+  codeHash   String
+  expiresAt  DateTime
+  attempts   Int        @default(0)
+  consumedAt DateTime?
+  createdAt  DateTime   @default(now())
+  user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, purpose, channel, createdAt])
 }

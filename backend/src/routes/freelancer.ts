@@ -1,22 +1,25 @@
 import { Router } from 'express';
-import jwt from 'jsonwebtoken';
 import rateLimit from 'express-rate-limit';
 import { z } from 'zod';
-import { config } from '../config';
 import { prisma } from '../db';
 import { badRequest, conflict, forbidden } from '../errors';
 import { authenticate } from '../middleware/auth';
 import { submitComplianceData, validateBirthDate, validateSocialSecurityNumber, validateTaxId } from '../services/compliance';
 import { encrypt } from '../services/crypto';
 import { geocodeAddress } from '../services/geocode';
+import { phoneField } from './auth';
+import { startSignupVerification } from '../services/otp';
 import { hashPassword } from '../services/password';
+import { saveHygieneCertificate } from '../services/hygiene';
 import { liftExpiredSuspension } from '../services/reliability';
 
 export const freelancerRouter = Router();
+const TAKEN = 'E-Mail-Adresse oder Handynummer ist bereits registriert';
 const Skill = z.enum(['BAR', 'SERVICE', 'KITCHEN', 'DISHWASHING']);
 
 const registerSchema = z.object({
   email: z.string().trim().toLowerCase().email('Ungültige E-Mail-Adresse').max(200),
+  phone: phoneField,
   password: z.string().min(10, 'Passwort: mindestens 10 Zeichen').max(128),
   displayName: z.string().trim().min(2, 'Name fehlt').max(60),
   zip: z.string().regex(/^\d{5}$/, 'PLZ: 5 Ziffern'),
@@ -39,12 +42,12 @@ freelancerRouter.post('/register', rateLimit({ windowMs: 15 * 60_000, limit: 20 
     if (!validateSocialSecurityNumber(b.socialSecurityNumber, b.birthDate))
       throw badRequest('Sozialversicherungsnummer ungültig oder passt nicht zum Geburtsdatum');
     if (!validateTaxId(b.taxId)) throw badRequest('Steuer-ID ungültig');
-    if (await prisma.user.findUnique({ where: { email: b.email }, select: { id: true } }))
-      throw conflict('Diese E-Mail-Adresse ist bereits registriert');
+    if (await prisma.user.findFirst({ where: { OR: [{ email: b.email }, { phone: b.phone }] }, select: { id: true } }))
+      throw conflict(TAKEN);
     const geo = await geocodeAddress(undefined, b.zip, b.city);
     const user = await prisma.user.create({
       data: {
-        email: b.email, passwordHash: await hashPassword(b.password),
+        email: b.email, phone: b.phone, passwordHash: await hashPassword(b.password),
         freelancer: { create: {
           displayName: b.displayName, claimedSkills: b.skills, homeLatitude: geo.latitude, homeLongitude: geo.longitude,
           socialSecurityNumberEnc: encrypt(b.socialSecurityNumber.replace(/\s/g, '').toUpperCase()),
@@ -53,9 +56,10 @@ freelancerRouter.post('/register', rateLimit({ windowMs: 15 * 60_000, limit: 20 
         } },
       },
     });
-    res.status(201).json({ token: jwt.sign({ sub: user.id }, config.jwtSecret, { algorithm: 'HS256', expiresIn: '8h' }) });
+    // Codes per E-Mail und SMS; Sitzung erst nach Bestätigung (POST /auth/verify)
+    res.status(201).json({ verificationToken: await startSignupVerification(user) });
   } catch (err) {
-    if ((err as { code?: string })?.code === 'P2002') return next(conflict('Diese E-Mail-Adresse ist bereits registriert'));
+    if ((err as { code?: string })?.code === 'P2002') return next(conflict(TAKEN));
     next(err);
   }
 });
@@ -69,11 +73,12 @@ freelancerRouter.get('/me', async (req, res, next) => {
     if (!me) throw forbidden('Kein Freelancer-Profil');
     await liftExpiredSuspension(me.id);
     const f = await prisma.freelancer.findUniqueOrThrow({ where: { id: me.id } });
+    const cert = await prisma.hygieneCertificate.findUnique({ where: { freelancerId: me.id }, select: { issuedOn: true } });
     res.json({
       displayName: f.displayName, verified: f.verified, verifiedSkills: f.verifiedSkills, claimedSkills: f.claimedSkills,
       rating: f.ratingCount ? +(f.ratingSum / f.ratingCount).toFixed(2) : null, ratingCount: f.ratingCount,
       reliabilityScore: f.reliabilityScore, accountStatus: f.accountStatus, suspendedUntil: f.suspendedUntil,
-      complianceValidated: !!f.complianceValidatedAt,
+      complianceValidated: !!f.complianceValidatedAt, hygiene: cert ? { issuedOn: cert.issuedOn } : null,
     });
   } catch (err) { next(err); }
 });
@@ -108,4 +113,18 @@ freelancerRouter.put('/me/compliance', (req, res, next) => {
     await submitComplianceData(f.id, body);
     res.status(204).end();
   })().catch(next);
+});
+
+/**
+ * Hygienenachweis (Belehrung nach § 43 IfSG) hochladen: Foto/PDF als Base64 + Ausstellungsdatum.
+ * Beim ersten Upload wird das Profil automatisch freigeschaltet.
+ */
+freelancerRouter.put('/me/hygiene-certificate', rateLimit({ windowMs: 60 * 60_000, limit: 15 }), async (req, res, next) => {
+  try {
+    const b = z.object({ file: z.string().min(100), issuedOn: z.coerce.date() }).strict().parse(req.body);
+    const f = await prisma.freelancer.findUnique({ where: { userId: req.userId! }, select: { id: true } });
+    if (!f) throw forbidden('Kein Freelancer-Profil');
+    await saveHygieneCertificate(f.id, b.file, b.issuedOn);
+    res.status(204).end();
+  } catch (err) { next(err); }
 });

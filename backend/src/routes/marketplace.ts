@@ -4,7 +4,7 @@ import { prisma } from '../db';
 import { DEFAULT_RADIUS_KM, MAX_RADIUS_KM, MIN_WAGE_CENTS } from '../config';
 import { badRequest, conflict, forbidden, notFound, unauthorized } from '../errors';
 import { assertRestaurantManager, assertRestaurantOwner, authenticate, requireFreelancer } from '../middleware/auth';
-import { decrypt } from '../services/crypto';
+import { decrypt, decryptBuffer } from '../services/crypto';
 import * as svc from '../services/marketplaceService';
 import { recordClockIn, registerNoShow } from '../services/reliability';
 
@@ -92,11 +92,11 @@ marketplaceRouter.get('/shifts/:id/applications', wrap(async (req, res) => {
   await assertRestaurantManager(uid(req), shift.restaurantId);
   const apps = await prisma.shiftApplication.findMany({
     where: { shiftId, status: 'PENDING' },
-    select: { freelancer: { select: { id: true, displayName: true, verifiedSkills: true, ratingSum: true, ratingCount: true } } },
+    select: { freelancer: { select: { id: true, displayName: true, verifiedSkills: true, ratingSum: true, ratingCount: true, hygieneCertificate: { select: { issuedOn: true } } } } },
   });
-  res.json(apps.map(a => ({
-    ...a.freelancer,
-    rating: a.freelancer.ratingCount ? +(a.freelancer.ratingSum / a.freelancer.ratingCount).toFixed(2) : null,
+  res.json(apps.map(({ freelancer: { hygieneCertificate, ...f } }) => ({
+    ...f, hygieneIssuedOn: hygieneCertificate?.issuedOn ?? null,
+    rating: f.ratingCount ? +(f.ratingSum / f.ratingCount).toFixed(2) : null,
   })));
 }));
 
@@ -189,5 +189,23 @@ marketplaceRouter.post('/shifts/:id/complete', async (req, res, next) => {
     const { rating } = z.object({ rating: z.number().int().min(1).max(5) }).strict().parse(req.body);
     await svc.completeShift(uid(req), shiftId, rating);
     res.status(204).end();
+  } catch (err) { next(err); }
+});
+
+/**
+ * Wirt/Manager: Hygienenachweis der bestätigten Aushilfe ansehen (Nachweispflicht des Arbeitgebers).
+ * Nur für Schichten dieses Restaurants im Status MATCHED/COMPLETED – vor der Zusage sind keine Dokumente einsehbar.
+ */
+marketplaceRouter.get('/shifts/:id/hygiene-certificate', async (req, res, next) => {
+  try {
+    const shiftId = idParam.parse(req.params.id);
+    const shift = await prisma.marketplaceShift.findUnique({ where: { id: shiftId }, select: { restaurantId: true, status: true, assignment: { select: { freelancerId: true } } } });
+    if (!shift) throw notFound('Schicht nicht gefunden');
+    await assertRestaurantManager(uid(req), shift.restaurantId);
+    if (!shift.assignment || (shift.status !== 'MATCHED' && shift.status !== 'COMPLETED')) throw forbidden('Erst nach der Zusage einsehbar');
+    const cert = await prisma.hygieneCertificate.findUnique({ where: { freelancerId: shift.assignment.freelancerId } });
+    if (!cert) throw notFound('Kein Hygienenachweis hinterlegt');
+    res.set({ 'Content-Type': cert.mimeType, 'Cache-Control': 'no-store', 'Content-Disposition': 'inline; filename="hygienenachweis"' })
+      .send(decryptBuffer(Buffer.from(cert.dataEnc)));
   } catch (err) { next(err); }
 });

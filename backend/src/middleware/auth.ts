@@ -15,7 +15,7 @@ export function authenticate(req: Request, _res: Response, next: NextFunction) {
   if (!header?.startsWith('Bearer ')) return next(unauthorized());
   try {
     const payload = jwt.verify(header.slice(7), config.jwtSecret, { algorithms: ['HS256'] });
-    if (typeof payload === 'string' || !payload.sub) return next(unauthorized());
+    if (typeof payload === 'string' || !payload.sub || payload.typ) return next(unauthorized()); // `typ` = Zwischen-Token (2FA)
     req.userId = payload.sub;
     next();
   } catch {

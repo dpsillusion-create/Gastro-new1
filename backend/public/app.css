@@ -108,3 +108,7 @@ footer a { text-decoration: none; } footer a:hover { color: var(--text); }
   .long { display: none; } .short { display: inline; } .brand small { display: none; } .top { gap: 8px; } .btn { padding: 9px 12px; font-size: 14px; white-space: nowrap; } .btn.lg { padding: 13px 18px; }
   .mark { width: 34px; height: 34px; } .brand strong { font-size: 15px; } .ticket { transform: rotate(2deg); } .form.grid { grid-template-columns: 1fr; } .row { flex-direction: column; } .who { display: none; } .btn.ghost#goLogin { padding: 9px 12px; } }
 @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+
+.link { background: none; border: 0; padding: 0; font: 500 14px var(--sans); color: var(--brand); text-decoration: underline; cursor: pointer; } .link:hover { color: var(--accent); }
+.links { display: flex; }
+#verifyText { margin: 0 0 14px; }

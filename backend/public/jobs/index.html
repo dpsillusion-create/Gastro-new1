@@ -62,7 +62,7 @@
       <section class="section">
         <h2>So funktioniert’s</h2>
         <ol class="steps">
-          <li><b>1</b><h3>Registrieren</h3><p>Fähigkeiten und Pflichtangaben eintragen. Wir prüfen dein Profil einmalig.</p></li>
+          <li><b>1</b><h3>Registrieren</h3><p>Fähigkeiten, Pflichtangaben und Hygienenachweis hinterlegen und per SMS und E-Mail bestätigen – ohne Wartezeit.</p></li>
           <li><b>2</b><h3>Schicht wählen</h3><p>Passende Schichten im Umkreis – rechts wischen heißt „Interesse“.</p></li>
           <li><b>3</b><h3>Bestätigung abwarten</h3><p>Der Betrieb wählt aus. Bei Zusage siehst du die Adresse und checkst vor Ort ein.</p></li>
         </ol>
@@ -92,18 +92,45 @@
             <label class="check"><input type="checkbox" name="skills" value="SERVICE"> Service</label>
             <label class="check"><input type="checkbox" name="skills" value="KITCHEN"> Küche</label>
             <label class="check"><input type="checkbox" name="skills" value="DISHWASHING"> Spülküche</label>
-            <small>Deine Angaben werden vor der Freischaltung geprüft.</small>
+            <small>Gib nur an, was du wirklich kannst – Betriebe bewerten dich nach jeder Schicht.</small>
           </fieldset>
           <label>Geburtsdatum<input name="birthDate" type="date" autocomplete="bday" required></label>
           <label>Sozialversicherungsnummer<input name="socialSecurityNumber" autocomplete="off" placeholder="12 Zeichen, z. B. 15070649C103" required></label>
           <label>Steuer-Identifikationsnummer<input name="taxId" inputmode="numeric" autocomplete="off" maxlength="11" placeholder="11 Ziffern" required></label>
           <p class="hint">Diese Angaben sind für die gesetzliche Sofortmeldung bei kurzfristiger Beschäftigung nötig. Sie werden verschlüsselt gespeichert und nur dafür verwendet.</p>
+          <fieldset class="skills"><legend>Hygienenachweis</legend>
+            <label class="grow-full">Foto oder PDF der Belehrung nach § 43 Infektionsschutzgesetz („Rote Karte“)
+              <input name="certFile" type="file" accept="image/jpeg,image/png,application/pdf" required></label>
+            <label class="grow-full">Ausgestellt am<input name="certDate" type="date" required></label>
+            <small>Ohne Nachweis ist keine Bewerbung möglich. Das Dokument wird verschlüsselt gespeichert; Betriebe sehen es erst nach ihrer Zusage.</small>
+          </fieldset>
           <label>E-Mail<input name="email" type="email" autocomplete="username" required></label>
+          <label>Handynummer<input name="phone" type="tel" inputmode="tel" autocomplete="tel" placeholder="0171 1234567" required>
+            <small>Wir senden dir einen Bestätigungscode per SMS. Die Nummer wird auch für die sichere Anmeldung genutzt.</small></label>
           <label>Passwort (mind. 10 Zeichen)<input name="password" type="password" minlength="10" autocomplete="new-password" required></label>
           <label class="check consent"><input type="checkbox" name="privacyConsent" required>
-            <span>Ich stimme der Verarbeitung meiner Daten zur Vermittlung von Schichten und zur Sofortmeldung zu. <a href="https://gastroevolution.de/datenschutz" target="_blank" rel="noopener">Datenschutzerklärung</a></span></label>
+            <span>Ich stimme der Verarbeitung meiner Daten zur Vermittlung von Schichten, zur Sofortmeldung und zur Prüfung meines Hygienenachweises zu. <a href="https://gastroevolution.de/datenschutz" target="_blank" rel="noopener">Datenschutzerklärung</a></span></label>
           <button class="btn accent block">Kostenlos registrieren</button>
         </form>
+      </div>
+    </section>
+
+
+    <!-- Bestätigungscodes (Registrierung) bzw. zweiter Faktor (Anmeldung) -->
+    <section id="verify" class="auth" hidden>
+      <div class="card narrow">
+        <h2 id="verifyTitle">Bestätigung</h2>
+        <p class="hint" id="verifyText"></p>
+        <form id="verifyForm" class="form">
+          <label id="emailCodeRow">Code aus der E-Mail<input name="emailCode" inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="\d{6}"></label>
+          <label id="phoneCodeRow">Code per SMS<input name="phoneCode" inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="\d{6}"></label>
+          <label id="loginCodeRow">6-stelliger Code<input name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="\d{6}"></label>
+          <button class="btn accent block">Bestätigen</button>
+        </form>
+        <div class="row-gap links">
+          <button id="resendSms" class="link" type="button">Code per SMS erneut senden</button>
+          <button id="resendMail" class="link" type="button">Code per E-Mail senden</button>
+        </div>
       </div>
     </section>
 

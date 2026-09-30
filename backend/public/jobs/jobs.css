@@ -46,3 +46,6 @@ label.consent { align-items: flex-start; font-size: 13px; font-weight: 400; colo
 body.in-app footer { display: none; }
 
 .app .hint { margin: 10px 0 12px; }
+
+fieldset.skills label.grow-full { flex-basis: 100%; }
+.links { margin-top: 14px; flex-wrap: wrap; gap: 6px 18px; } .cert-form { margin-top: 14px; }

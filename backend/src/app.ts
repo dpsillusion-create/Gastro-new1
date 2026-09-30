@@ -13,6 +13,8 @@ export function createApp() {
   const app = express();
   app.set('trust proxy', 1); // hinter nginx: echte Client-IP für Rate-Limits
   app.use(helmet());
+  // Nur der Dokument-Upload darf größer sein (Base64 von max. 5 MB); vor dem globalen Parser mounten
+  app.use('/api/v1/freelancers/me/hygiene-certificate', express.json({ limit: '8mb' }));
   app.use(express.json({ limit: '50kb' }));
   // Weboberfläche für Gastronomen (statisch, CSP-konform ohne Inline-Skripte)
   app.use('/app', express.static(path.resolve(process.cwd(), 'public'), { index: 'index.html', maxAge: '5m' }));

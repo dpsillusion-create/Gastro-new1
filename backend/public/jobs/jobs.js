@@ -7,7 +7,8 @@ const store = {
   set: (k, v) => { try { v == null ? localStorage.removeItem(k) : localStorage.setItem(k, v); } catch { /* ignorieren */ } },
 };
 const json = (k, d) => { try { return JSON.parse(store.get(k)) ?? d; } catch { return d; } };
-const state = { me: null, deck: [], pos: null, busy: false, apps: [] };
+const state = { me: null, deck: [], pos: null, busy: false, apps: [], cert: null };
+const formData = (form) => Object.fromEntries(new FormData(form));
 const SKILL = { BAR: 'Bar', SERVICE: 'Service', KITCHEN: 'Küche', DISHWASHING: 'Spülküche' };
 
 function el(tag, props = {}, ...children) {
@@ -28,7 +29,7 @@ async function api(path, { method = 'GET', body } = {}) {
   let data = null; try { data = await res.json(); } catch { /* leer */ }
   if (res.status === 401 && t) { logout(); throw new Error('Sitzung abgelaufen – bitte erneut anmelden'); }
   if (res.status === 429) throw new Error('Zu viele Anfragen – bitte kurz warten');
-  if (!res.ok) throw new Error(errorText(data));
+  if (!res.ok) { const err = new Error(errorText(data)); err.body = data; throw err; }
   return data;
 }
 async function busy(btn, fn) { btn.disabled = true; show(''); try { await fn(); } catch (e) { show(e.message); } finally { btn.disabled = false; } }
@@ -37,7 +38,7 @@ const euro = (c) => (c / 100).toLocaleString('de-DE', { style: 'currency', curre
 
 // ---- Ansichten ----
 function view(name) {
-  $('landing').hidden = name !== 'landing'; $('auth').hidden = name !== 'auth'; $('appview').hidden = name !== 'app';
+  $('landing').hidden = name !== 'landing'; $('auth').hidden = name !== 'auth'; $('verify').hidden = name !== 'verify'; $('appview').hidden = name !== 'app';
   const inApp = name === 'app';
   $('guestbox').hidden = inApp; $('userbox').hidden = !inApp; $('nav').hidden = inApp; $('tabbar').hidden = !inApp;
   document.body.classList.toggle('in-app', inApp);
@@ -58,16 +59,88 @@ $('logout').onclick = logout;
 $('home').addEventListener('click', (e) => { e.preventDefault(); if (!store.get('jobs_token')) view('landing'); });
 
 $('loginForm').addEventListener('submit', (e) => {
-  e.preventDefault(); const f = Object.fromEntries(new FormData(e.target));
-  busy(e.submitter, async () => { store.set('jobs_token', (await api('/auth/login', { method: 'POST', body: f })).token); await start(); });
-});
-$('registerForm').addEventListener('submit', (e) => {
-  e.preventDefault(); const fd = new FormData(e.target); const f = Object.fromEntries(fd);
+  e.preventDefault(); const f = formData(e.target);
   busy(e.submitter, async () => {
-    const res = await api('/freelancers/register', { method: 'POST', body: { ...f, skills: fd.getAll('skills'), privacyConsent: fd.has('privacyConsent') } });
-    store.set('jobs_token', res.token); await start();
+    try {
+      const r = await api('/auth/login', { method: 'POST', body: f });
+      openVerify('login', r.challengeToken, r.phoneHint);
+    } catch (err) {
+      if (err.body && err.body.error === 'NOT_VERIFIED') { openVerify('signup', err.body.verificationToken); show('Bitte bestätige zuerst E-Mail und Handynummer – wir haben dir neue Codes geschickt.', true); return; }
+      throw err;
+    }
   });
 });
+$('registerForm').addEventListener('submit', (e) => {
+  e.preventDefault(); const fd = new FormData(e.target);
+  const file = fd.get('certFile'), issuedOn = fd.get('certDate');
+  fd.delete('certFile'); fd.delete('certDate');
+  const f = Object.fromEntries(fd);
+  busy(e.submitter, async () => {
+    const r = await api('/freelancers/register', { method: 'POST', body: { ...f, skills: fd.getAll('skills'), privacyConsent: fd.has('privacyConsent') } });
+    state.cert = { file, issuedOn }; // wird nach der Bestätigung der Codes hochgeladen
+    openVerify('signup', r.verificationToken);
+  });
+});
+async function onSession(token) {
+  store.set('jobs_token', token);
+  if (state.cert) {
+    try { await uploadCert(state.cert.file, state.cert.issuedOn); state.cert = null; }
+    catch (e) { await start(); show('Der Hygienenachweis konnte nicht hochgeladen werden (' + e.message + ') – bitte im Reiter „Profil“ erneut versuchen.'); return; }
+  }
+  await start();
+}
+
+// ---- Bestätigungscodes (Registrierung) bzw. zweiter Faktor (Anmeldung) ----
+const pending = { mode: null, token: null };
+function setVerifyRows(emailRow, phoneRow, loginRow) {
+  const f = $('verifyForm').elements;
+  $('emailCodeRow').hidden = !emailRow; $('phoneCodeRow').hidden = !phoneRow; $('loginCodeRow').hidden = !loginRow;
+  f.emailCode.required = emailRow; f.phoneCode.required = phoneRow; f.code.required = loginRow;
+}
+function openVerify(mode, token, hint) {
+  pending.mode = mode; pending.token = token; view('verify'); show('');
+  const signup = mode === 'signup';
+  $('verifyForm').reset(); setVerifyRows(signup, signup, !signup);
+  $('verifyTitle').textContent = signup ? 'Konto bestätigen' : 'Sicherheitscode';
+  $('verifyText').textContent = signup
+    ? 'Wir haben dir einen Code per E-Mail und einen per SMS geschickt. Bitte gib beide ein.'
+    : `Zur Sicherheit haben wir dir einen Code per SMS geschickt${hint ? ' (' + hint + ')' : ''}.`;
+  $('resendMail').textContent = signup ? 'Code per E-Mail erneut senden' : 'Code stattdessen per E-Mail senden';
+  $('resendSms').textContent = 'Code per SMS erneut senden';
+}
+$('verifyForm').addEventListener('submit', (e) => {
+  e.preventDefault(); const f = formData(e.target);
+  busy(e.submitter, async () => {
+    try {
+      const r = pending.mode === 'signup'
+        ? await api('/auth/verify', { method: 'POST', body: { verificationToken: pending.token, ...(f.emailCode ? { emailCode: f.emailCode } : {}), ...(f.phoneCode ? { phoneCode: f.phoneCode } : {}) } })
+        : await api('/auth/login/verify', { method: 'POST', body: { challengeToken: pending.token, code: f.code } });
+      await onSession(r.token);
+    } catch (err) {
+      // schon bestätigte Codes ausblenden, damit nur noch der fehlende eingegeben werden muss
+      if (err.body && err.body.error === 'CODE_INVALID') setVerifyRows(!err.body.emailVerified, !err.body.phoneVerified, false);
+      throw err;
+    }
+  });
+});
+const resend = (channel) => async () => { await api('/auth/resend', { method: 'POST', body: { token: pending.token, purpose: pending.mode, channel } }); show('Neuer Code wurde gesendet.', true); };
+$('resendSms').onclick = (e) => busy(e.target, resend('SMS'));
+$('resendMail').onclick = (e) => busy(e.target, resend('EMAIL'));
+
+// ---- Hygienenachweis: Foto verkleinern (Handyfotos sind oft > 5 MB), PDF unverändert ----
+const readB64 = (blob) => new Promise((ok, fail) => { const r = new FileReader(); r.onload = () => ok(String(r.result).split(',')[1]); r.onerror = () => fail(new Error('Datei nicht lesbar')); r.readAsDataURL(blob); });
+async function fileToBase64(file) {
+  if (!file) throw new Error('Keine Datei gewählt');
+  if (file.type === 'application/pdf') { if (file.size > 5e6) throw new Error('PDF zu groß (max. 5 MB)'); return readB64(file); }
+  if (!file.type.startsWith('image/')) throw new Error('Nur Foto (JPG/PNG) oder PDF erlaubt');
+  const bmp = await createImageBitmap(file), k = Math.min(1, 1800 / Math.max(bmp.width, bmp.height));
+  const c = el('canvas'); c.width = Math.round(bmp.width * k); c.height = Math.round(bmp.height * k);
+  c.getContext('2d').drawImage(bmp, 0, 0, c.width, c.height);
+  return readB64(await new Promise((ok) => c.toBlob(ok, 'image/jpeg', 0.85)));
+}
+async function uploadCert(file, issuedOn) {
+  await api('/freelancers/me/hygiene-certificate', { method: 'PUT', body: { file: await fileToBase64(file), issuedOn } });
+}
 
 // ---- Tabs der App ----
 document.querySelectorAll('#tabbar button').forEach((b) => b.addEventListener('click', () => {
@@ -116,7 +189,7 @@ function renderDeck() {
   const [a, b] = state.deck;
   if (!a) {
     const p = state.me;
-    const msg = !p ? '' : !p.verified ? 'Dein Profil wird noch geprüft. Sobald es freigeschaltet ist, erscheinen hier passende Schichten.'
+    const msg = !p ? '' : !p.verified ? 'Lade zuerst deinen Hygienenachweis im Reiter „Profil“ hoch – danach siehst du sofort passende Schichten.'
       : p.accountStatus === 'SUSPENDED' ? 'Dein Konto ist vorübergehend gesperrt.' : 'Gerade keine passenden Schichten in deinem Umkreis.';
     d.append(el('div', { class: 'empty' }, el('div', {}, msg), p && p.verified ? el('button', { class: 'btn ghost', onclick: () => loadDeck().catch((e) => show(e.message)) }, 'Neu laden') : ''));
   } else { if (b) d.append(shiftCard(b, false)); d.append(shiftCard(a, true)); }
@@ -201,12 +274,25 @@ function renderProfile() {
     kv('Fähigkeiten', (p.verified ? p.verifiedSkills : p.claimedSkills).map((x) => SKILL[x] || x).join(', ') + (p.verified ? '' : ' (angegeben)')),
     kv('Bewertung', p.rating ? `★ ${p.rating} (${p.ratingCount})` : 'noch keine'),
     kv('Zuverlässigkeit', Math.round(p.reliabilityScore * 100) + ' %'),
-    kv('Konto', p.accountStatus === 'SUSPENDED' ? 'Gesperrt bis ' + new Date(p.suspendedUntil).toLocaleDateString('de-DE') : 'Aktiv'));
+    kv('Konto', p.accountStatus === 'SUSPENDED' ? 'Gesperrt bis ' + new Date(p.suspendedUntil).toLocaleDateString('de-DE') : 'Aktiv'),
+    kv('Hygiene-Belehrung', p.hygiene ? 'ausgestellt am ' + new Date(p.hygiene.issuedOn).toLocaleDateString('de-DE') : 'fehlt'));
+  const form = el('form', { class: 'form cert-form', hidden: '' },
+    el('label', {}, 'Foto oder PDF der Belehrung (§ 43 IfSG)', el('input', { type: 'file', name: 'certFile', accept: 'image/jpeg,image/png,application/pdf', required: '' })),
+    el('label', {}, 'Ausgestellt am', el('input', { type: 'date', name: 'certDate', required: '' })),
+    el('button', { class: 'btn accent block' }, 'Hochladen'));
+  form.addEventListener('submit', (ev) => { ev.preventDefault(); busy(ev.submitter, async () => {
+    await uploadCert(form.elements.certFile.files[0], form.elements.certDate.value);
+    state.me = await api('/freelancers/me'); setBanner(); renderProfile(); await loadDeck();
+    show(p.verified ? 'Neuer Nachweis gespeichert.' : 'Nachweis gespeichert – du bist freigeschaltet und kannst Schichten annehmen!', true);
+  }); });
+  if (!p.hygiene) form.hidden = false;
+  else box.append(el('div', { class: 'actions' }, el('button', { class: 'link', type: 'button', onclick: () => { form.hidden = !form.hidden; } }, 'Neuen Nachweis hochladen')));
+  box.append(form);
 }
 function setBanner() {
   const p = state.me, b = $('banner'); b.className = 'banner'; b.hidden = false;
   if (p.accountStatus === 'SUSPENDED') { b.classList.add('err'); b.textContent = `Dein Konto ist bis ${new Date(p.suspendedUntil).toLocaleDateString('de-DE')} gesperrt, weil du zu einer bestätigten Schicht nicht erschienen bist.`; }
-  else if (!p.verified) b.textContent = 'Willkommen! Wir prüfen gerade dein Profil. Sobald es freigeschaltet ist, kannst du Schichten annehmen.';
+  else if (!p.verified) b.textContent = 'Willkommen! Lade noch deinen Hygienenachweis im Reiter „Profil“ hoch – dann kannst du sofort Schichten annehmen.';
   else b.hidden = true;
 }
 

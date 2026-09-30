@@ -53,3 +53,16 @@ certbot --nginx -d jobs.gastroevolution.de
 - Der Worker (`smartshift-worker`, No-Show-Erkennung und Webhook-Retry) wird von `deploy.sh` mitinstalliert: `journalctl -u smartshift-worker -f`.
 - Regelmäßige, verschlüsselte Datenbank-Backups (`pg_dump`).
 - Firewall: nur 22, 80, 443 offen; Port 3000 nicht öffentlich.
+
+## Bestätigungscodes und Zwei-Faktor-Anmeldung (SMS + E-Mail)
+Registrierung und Anmeldung verlangen Codes per E-Mail und SMS. Ohne Zugangsdaten für den Versand kann sich in Produktion
+**niemand registrieren oder anmelden** (bewusst: „fail closed“). Zwei Wege:
+
+1. **Echter Versand** – in `/etc/smartshift.env` eintragen (Vorlage: `backend/.env.example`):
+   `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `MAIL_FROM` sowie `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_FROM`.
+   Danach `systemctl restart smartshift`.
+2. **Übergangsweise zum Testen:** `NOTIFY_MODE=log` in `/etc/smartshift.env`. Die Codes erscheinen dann in `journalctl -u smartshift -f`.
+   Nicht für echte Nutzer verwenden.
+
+Der Versand ist bisher nur im Protokoll-Modus getestet (keine Zugangsdaten vorhanden). Beim ersten echten Versand bitte einmal selbst
+registrieren und anmelden. `OTP_TEST_CODE` ist nur für automatische Tests gedacht und wird in Produktion ignoriert.

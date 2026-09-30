@@ -87,16 +87,33 @@ async function main() {
   check('Inhaber → 201, Status OPEN', created.status === 201 && created.json.status === 'OPEN', created);
   const shiftId: string = created.json.id;
 
-  console.log('— Registrierung / Login');
-  const reg = { email: 'neu@smoketest.invalid', password: 'ein-langes-passwort', restaurantName: 'Smoketest Restaurant', street: 'Teststr. 2',
+  console.log('— Registrierung / Zwei-Faktor');
+  const CODE = '123456'; // = OTP_TEST_CODE des Testservers
+  const reg = { email: 'neu@smoketest.invalid', phone: '0171 1000001', password: 'ein-langes-passwort', restaurantName: 'Smoketest Restaurant', street: 'Teststr. 2',
     zip: '20095', city: 'Hamburg', betriebsnummer: '12345678', latitude: 53.55, longitude: 9.99 };
   check('Registrierung mit kurzem Passwort → 400', (await api('POST', '/api/v1/auth/register', null, { ...reg, password: 'kurz' })).status === 400);
+  check('ungültige Handynummer → 400', (await api('POST', '/api/v1/auth/register', null, { ...reg, phone: '12345' })).status === 400);
   const rr = await api('POST', '/api/v1/auth/register', null, reg);
-  check('Registrierung → 201 + Token', rr.status === 201 && !!rr.json.token, rr);
-  check('Doppelte E-Mail → 409', (await api('POST', '/api/v1/auth/register', null, reg)).status === 409);
+  check('Registrierung → 201, noch KEIN Sitzungstoken', rr.status === 201 && !!rr.json.verificationToken && !rr.json.token, rr);
+  check('Zwischen-Token ist keine Sitzung → 401', (await fetch(BASE + '/api/v1/auth/me', { headers: { authorization: `Bearer ${rr.json.verificationToken}` } })).status === 401);
+  check('doppelte E-Mail → 409', (await api('POST', '/api/v1/auth/register', null, { ...reg, phone: '0171 1000002' })).status === 409);
+  check('doppelte Handynummer → 409', (await api('POST', '/api/v1/auth/register', null, { ...reg, email: 'anders@smoketest.invalid' })).status === 409);
+  const nv = await api('POST', '/api/v1/auth/login', null, { email: reg.email, password: reg.password });
+  check('Login vor Bestätigung → 403 NOT_VERIFIED', nv.status === 403 && nv.json?.error === 'NOT_VERIFIED', nv);
+  const badCode = await api('POST', '/api/v1/auth/verify', null, { verificationToken: rr.json.verificationToken, emailCode: '000000', phoneCode: CODE });
+  check('falscher E-Mail-Code → 400, SMS-Code zählt', badCode.status === 400 && badCode.json.phoneVerified === true && badCode.json.emailVerified === false, badCode);
+  const vr = await api('POST', '/api/v1/auth/verify', null, { verificationToken: rr.json.verificationToken, emailCode: CODE });
+  check('E-Mail-Code nachgereicht → Sitzungstoken', vr.status === 200 && !!vr.json.token, vr);
   check('Login falsches Passwort → 401', (await api('POST', '/api/v1/auth/login', null, { email: reg.email, password: 'falsch-falsch-falsch' })).status === 401);
-  const li = await api('POST', '/api/v1/auth/login', null, { email: reg.email, password: reg.password });
-  check('Login → 200 + Token', li.status === 200 && !!li.json.token, li);
+  const l1 = await api('POST', '/api/v1/auth/login', null, { email: reg.email, password: reg.password });
+  check('Login Schritt 1 → Zwei-Faktor verlangt, kein Token', l1.status === 200 && l1.json.twoFactor === true && !l1.json.token, l1);
+  check('Login mit falschem Code → 400', (await api('POST', '/api/v1/auth/login/verify', null, { challengeToken: l1.json.challengeToken, code: '111111' })).status === 400);
+  const li = await api('POST', '/api/v1/auth/login/verify', null, { challengeToken: l1.json.challengeToken, code: CODE });
+  check('Login Schritt 2 → 200 + Token', li.status === 200 && !!li.json.token, li);
+  check('Code nur einmal verwendbar', (await api('POST', '/api/v1/auth/login/verify', null, { challengeToken: l1.json.challengeToken, code: CODE })).status === 400);
+  const l2 = await api('POST', '/api/v1/auth/login', null, { email: reg.email, password: reg.password });
+  check('Code per E-Mail anfordern → 204', (await api('POST', '/api/v1/auth/resend', null, { token: l2.json.challengeToken, purpose: 'login', channel: 'EMAIL' })).status === 204);
+  check('Login mit E-Mail-Code → 200', (await api('POST', '/api/v1/auth/login/verify', null, { challengeToken: l2.json.challengeToken, code: CODE })).status === 200);
   const authed = async (m: string, p: string, b?: unknown) => {
     const r = await fetch(BASE + p, { method: m, headers: { 'content-type': 'application/json', authorization: `Bearer ${li.json.token}` }, body: b ? JSON.stringify(b) : undefined });
     const t = await r.text(); return { status: r.status, json: t ? JSON.parse(t) : null };
@@ -139,20 +156,32 @@ async function main() {
   check('Export für Fremde → 403', (await api('GET', `/api/v1/marketplace/shifts/${shiftId}/sofortmeldung-export`, stranger!.id)).status === 403);
 
   console.log('— Aushilfe registriert sich selbst');
-  const freg = { email: 'aushilfe@smoketest.invalid', password: 'ein-langes-passwort', displayName: 'Selbst Registriert', zip: '20359', city: 'Hamburg',
+  const freg = { email: 'aushilfe@smoketest.invalid', phone: '+49 171 2000001', password: 'ein-langes-passwort', displayName: 'Selbst Registriert', zip: '20359', city: 'Hamburg',
     skills: ['BAR'], birthDate: '1949-06-07', socialSecurityNumber: '15070649C103', taxId: '86095742719', privacyConsent: true };
   check('ohne Einwilligung → 400', (await api('POST', '/api/v1/freelancers/register', null, { ...freg, privacyConsent: false })).status === 400);
   check('ungültige Steuer-ID → 400', (await api('POST', '/api/v1/freelancers/register', null, { ...freg, taxId: '86095742710' })).status === 400);
-  const fr = await api('POST', '/api/v1/freelancers/register', null, freg);
-  check('Registrierung → 201', fr.status === 201 && !!fr.json.token, fr);
+  const fr0 = await api('POST', '/api/v1/freelancers/register', null, freg);
+  check('Registrierung → 201 (Codes per E-Mail und SMS)', fr0.status === 201 && !!fr0.json.verificationToken, fr0);
+  const fr = await api('POST', '/api/v1/auth/verify', null, { verificationToken: fr0.json.verificationToken, emailCode: CODE, phoneCode: CODE });
+  check('beide Codes → Sitzung', fr.status === 200 && !!fr.json.token, fr);
   const fauth = async (m: string, p: string, b?: unknown) => {
     const r = await fetch(BASE + p, { method: m, headers: { 'content-type': 'application/json', authorization: `Bearer ${fr.json.token}` }, body: b ? JSON.stringify(b) : undefined });
     const t = await r.text(); return { status: r.status, json: t ? JSON.parse(t) : null };
   };
   const prof = await fauth('GET', '/api/v1/freelancers/me');
-  check('Profil: unverifiziert, Skills angegeben', prof.json?.verified === false && prof.json?.claimedSkills?.[0] === 'BAR', prof);
-  check('Suche vor Verifizierung → 403', (await fauth('GET', '/api/v1/marketplace/search')).status === 403);
-  await prisma.freelancer.updateMany({ where: { user: { email: freg.email } }, data: { verified: true, verifiedSkills: ['BAR'] } });
+  check('Profil: noch nicht freigeschaltet, Skills angegeben', prof.json?.verified === false && prof.json?.claimedSkills?.[0] === 'BAR' && prof.json?.hygiene === null, prof);
+  check('Suche ohne Hygienenachweis → 403', (await fauth('GET', '/api/v1/marketplace/search')).status === 403);
+
+  console.log('— Hygienenachweis');
+  const png = (await import('fs')).readFileSync('public/jobs/icon-192.png').toString('base64');
+  const issued = new Date(Date.now() - 30 * 86400_000).toISOString().slice(0, 10);
+  check('Textdatei statt Bild → 400', (await fauth('PUT', '/api/v1/freelancers/me/hygiene-certificate', { file: Buffer.from('das ist kein Bild '.repeat(20)).toString('base64'), issuedOn: issued })).status === 400);
+  check('Ausstellungsdatum in der Zukunft → 400', (await fauth('PUT', '/api/v1/freelancers/me/hygiene-certificate', { file: png, issuedOn: '2999-01-01' })).status === 400);
+  check('Nachweis hochladen → 204', (await fauth('PUT', '/api/v1/freelancers/me/hygiene-certificate', { file: png, issuedOn: issued })).status === 204);
+  const prof2 = await fauth('GET', '/api/v1/freelancers/me');
+  check('automatisch freigeschaltet, Skills übernommen', prof2.json?.verified === true && prof2.json?.verifiedSkills?.[0] === 'BAR' && !!prof2.json?.hygiene, prof2);
+  const dbCert = await prisma.hygieneCertificate.findFirstOrThrow({ where: { freelancer: { user: { email: freg.email } } } });
+  check('Dokument liegt verschlüsselt in der Datenbank', !Buffer.from(dbCert.dataEnc).includes(Buffer.from(png, 'base64').subarray(0, 16)), null);
   const shift2 = await api('POST', '/api/v1/marketplace/shifts', owner!.id, { ...good, startTime: new Date(Date.now() + 30 * 3600_000).toISOString(), endTime: new Date(Date.now() + 38 * 3600_000).toISOString() });
   const s2 = await fauth('GET', '/api/v1/marketplace/search');
   check('nach Verifizierung: Schicht in der Suche', s2.status === 200 && s2.json.shifts.some((x: { id: string }) => x.id === shift2.json.id), s2);
@@ -163,7 +192,13 @@ async function main() {
   check('nach Zurückziehen nicht mehr in Bewerbungen', (await fauth('GET', '/api/v1/freelancers/me/applications')).json?.length === 0);
   check('erneut bewerben → 201', (await fauth('POST', `/api/v1/marketplace/shifts/${shift2.json.id}/apply`)).status === 201);
   const fid = (await prisma.freelancer.findFirstOrThrow({ where: { user: { email: freg.email } } })).id;
+  const lst = await api('GET', `/api/v1/marketplace/shifts/${shift2.json.id}/applications`, owner!.id);
+  check('Wirt sieht Hygiene-Datum der Bewerberin', lst.json?.[0]?.hygieneIssuedOn?.startsWith(issued), lst);
+  check('Dokument vor der Zusage NICHT abrufbar → 403', (await fetch(`${BASE}/api/v1/marketplace/shifts/${shift2.json.id}/hygiene-certificate`, { headers: { authorization: `Bearer ${token(owner!.id)}` } })).status === 403);
   check('Wirt bestätigt → 200', (await api('POST', `/api/v1/marketplace/shifts/${shift2.json.id}/accept`, owner!.id, { freelancerId: fid })).status === 200);
+  const dl = await fetch(`${BASE}/api/v1/marketplace/shifts/${shift2.json.id}/hygiene-certificate`, { headers: { authorization: `Bearer ${token(owner!.id)}` } });
+  check('nach Zusage: Dokument abrufbar (PNG, unverändert)', dl.status === 200 && dl.headers.get('content-type') === 'image/png' && Buffer.from(await dl.arrayBuffer()).equals(Buffer.from(png, 'base64')));
+  check('Dokument für Fremde → 403', (await fetch(`${BASE}/api/v1/marketplace/shifts/${shift2.json.id}/hygiene-certificate`, { headers: { authorization: `Bearer ${token(stranger!.id)}` } })).status === 403);
   const apps2 = await fauth('GET', '/api/v1/freelancers/me/applications');
   check('nach Bestätigung: ACCEPTED mit Adresse', apps2.json?.[0]?.status === 'ACCEPTED' && apps2.json[0].shift.restaurant.street === 'Teststr. 1', apps2);
 
