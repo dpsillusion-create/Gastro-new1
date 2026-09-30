@@ -7,6 +7,7 @@ import path from 'path';
 import { adminRouter } from './routes/admin';
 import { authRouter } from './routes/auth';
 import { integrationRouter } from './routes/integration';
+import { pushRouter } from './routes/push';
 import { restaurantRouter } from './routes/restaurants';
 import { freelancerRouter } from './routes/freelancer';
 import { systemRouter } from './routes/system';
@@ -30,6 +31,7 @@ export function createApp() {
 
   app.use('/api/v1/auth', authRouter);
   app.use('/api/v1/admin', rateLimit({ windowMs: 60_000, limit: API_LIMIT(120) }), adminRouter);
+  app.use('/api/v1/push', rateLimit({ windowMs: 60_000, limit: API_LIMIT(60) }), pushRouter);
   app.use('/api/v1/restaurants', rateLimit({ windowMs: 60_000, limit: API_LIMIT(60) }), restaurantRouter);
   app.use('/api/v1/integrations', rateLimit({ windowMs: 60_000, limit: API_LIMIT(300) }), integrationRouter);
   app.use('/api/v1/freelancers', rateLimit({ windowMs: 60_000, limit: API_LIMIT(180) }), freelancerRouter); // Mobilfunknetze teilen sich oft eine IP; Registrierung/Upload haben eigene, strengere Limits

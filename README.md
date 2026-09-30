@@ -17,12 +17,11 @@ Live: **https://jobs.gastroevolution.de** – Betriebe unter `/app/`, Aushilfen 
 Start lokal: `cd backend && npm install && cp .env.example .env && npx prisma migrate dev && npm run dev`
 
 ## Funktionen
-**Betriebe:** registrieren (E-Mail-Code), anmelden mit zweitem Faktor, Schichten ausschreiben (Mindestlohn-Prüfung), Bewerber mit
-Bewertung und Hygiene-Hinweis sehen, bestätigen, Anwesenheit melden, Schicht abschließen und bewerten, Meldedaten der Sofortmeldung
-exportieren, Hygienenachweis der zugesagten Aushilfe einsehen, API-Schlüssel für das Zeiterfassungsterminal verwalten.
+**Betriebe:** registrieren (E-Mail-Code, Zustimmung zu Bedingungen), anmelden mit zweitem Faktor, Schichten ausschreiben (Mindestlohn-Prüfung, auch für mehrere Personen mit Nachrücken der Bewerber), Team-Manager einladen, Bewerber mit
+Bewertung und Hygiene-Hinweis sehen, bestätigen, Anwesenheit melden, Schicht abschließen und bewerten, Sofortmeldung als geführter Ablauf (Daten ergänzen, exportieren, als gemeldet abhaken, Erinnerung), Zusage zurücknehmen, Hygienenachweis der zugesagten Aushilfe einsehen, API-Schlüssel für das Zeiterfassungsterminal verwalten.
 
 **Aushilfen:** registrieren (SV-Nummer, Steuer-ID, Geburtsdatum mit Prüfziffern, Hygienenachweis-Upload → automatische Freischaltung),
-Schichten im Umkreis per Wisch annehmen, Bewerbungen verfolgen (Adresse erst nach Zusage), Profil mit Bewertung und Zuverlässigkeit, Konto löschen.
+Schichten im Umkreis per Wisch annehmen, Bewerbungen verfolgen (Adresse erst nach Zusage), Zusage absagen (kurzfristig = Punktabzug), Profil mit Bewertung und Zuverlässigkeit, Konto löschen.
 
 **Sicherheit:** Passwort + zweiter Faktor (Authenticator-App/TOTP oder E-Mail-Code), Passwort-Reset per E-Mail-Code, Brute-Force-Schutz,
 SV-Nummer/Steuer-ID/Nachweise/Secrets AES-256-GCM-verschlüsselt, Zwischen-Tokens sind keine Sitzungen, Rate-Limits, strikte CSP.
@@ -33,7 +32,7 @@ sonst entscheidet der Wirt selbst (E-Mail-Erinnerung 20 Min. nach Schichtbeginn)
 **Verwaltung** (Nutzer mit `make-admin`): Übersicht, Aushilfen und Betriebe suchen/sperren/freischalten, Hygienenachweise einsehen,
 Konten anonymisieren (DSGVO), Protokoll aller Verwaltungsaktionen.
 
-**E-Mails:** neue Bewerbung (Wirt), Zusage mit Adresse / Schicht besetzt / Schicht zurückgezogen (Aushilfe), Sperre, Anwesenheits-Erinnerung.
+**Benachrichtigungen:** E-Mail und (optional, pro Gerät) Push-Nachricht bei neuer Bewerbung, Zusage, Absage, Sperre, Sofortmeldung fällig, Anwesenheits-Erinnerung.
 
 ## API (Auszug)
 | Bereich | Endpunkte |
@@ -42,7 +41,10 @@ Konten anonymisieren (DSGVO), Protokoll aller Verwaltungsaktionen.
 | Anmeldung | `POST /api/v1/auth/register`, `/verify`, `/login`, `/login/verify`, `/resend`, `/password/forgot`, `/password/reset`, `GET /auth/me`, `POST /auth/totp/setup|enable|disable` |
 | Aushilfen | `POST /api/v1/freelancers/register`, `GET /me`, `GET /me/applications`, `PUT /me/hygiene-certificate`, `DELETE /me` |
 | Marktplatz | `POST /api/v1/marketplace/shifts`, `GET /search`, `POST /shifts/:id/apply|withdraw|accept|cancel|attendance|complete`, `GET /my-shifts`, `/shifts/:id/applications|sofortmeldung-export|hygiene-certificate` |
-| Betriebe | `GET/POST/DELETE /api/v1/restaurants/:id/api-keys` |
+| Betriebe | `GET/POST/DELETE /api/v1/restaurants/:id/api-keys`, `/team`, `/team/invitations`, `/team/members/:userId` |
+| Einladung | `GET /api/v1/auth/invitation/:token`, `POST /auth/register-invited`, `POST /auth/invitation/accept` |
+| Absagen / Meldung | `POST /marketplace/shifts/:id/cancel-assignment` (Aushilfe), `/cancel-match` (Betrieb), `/sofortmeldung/reported`, `PUT /shifts/:id/activity-key` |
+| Push | `GET /api/v1/push/public-key`, `POST /push/subscribe`, `/push/unsubscribe` |
 | Terminal | `POST /api/v1/integrations/clock-in`, `GET /integrations/shifts` (API-Schlüssel `Authorization: Bearer ge_…`) |
 | Verwaltung | `/api/v1/admin/stats|freelancers|restaurants|audit|users/:id` |
 
@@ -53,6 +55,6 @@ legt nur Testdaten `@smoketest.invalid` an und räumt sie weg).
 
 ## Bewusst nicht enthalten / offen
 - Die **Übermittlung der Sofortmeldung** an die Rentenversicherung: es entstehen nur exportfertige Meldedaten (DEÜV-Schlüssel vor Produktivbetrieb prüfen).
-- **Push-Nachrichten** aufs Handy (aktuell: E-Mail, die Aushilfen-App fragt alle 30 s nach, solange sie offen ist).
+- Push funktioniert erst nach Einrichten der VAPID-Schlüssel (`npm run vapid`); der echte Versand an Handys ist nur mit einem nachgebauten Push-Dienst getestet. iPhones benötigen die auf den Home-Bildschirm gelegte App.
 - Rechtstexte für diese Seite (Impressum/Datenschutz verlinken auf gastroevolution.de) – rechtlich prüfen lassen.
 - Ob und wie lange Hygienenachweis und Meldedaten aufbewahrt werden müssen, klären Steuerberater/Gesundheitsamt.

@@ -312,6 +312,7 @@ function renderProfile() {
   }); });
   d.replaceChildren(el('h2', {}, 'Konto'), el('p', { class: 'hint' }, 'Du kannst dein Konto jederzeit löschen. Profildaten und Hygienenachweis werden entfernt; gesetzlich aufbewahrungspflichtige Meldedaten früherer Schichten bleiben erhalten.'),
     el('button', { class: 'link danger', type: 'button', onclick: () => { del.hidden = !del.hidden; } }, 'Konto löschen …'), del);
+  PushUI.mount($('push'), { api, show, swScope: '/jobs/' });
   TotpUI.mount($('security'), { api, show, enabled: p.totpEnabled, onChange: async () => { state.me = await api('/freelancers/me'); renderProfile(); } });
 }
 function setBanner() {

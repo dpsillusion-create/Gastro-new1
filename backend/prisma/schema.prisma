@@ -75,6 +75,7 @@ model User {
   totpFailures    Int       @default(0)
   totpLockedUntil DateTime?
   otpChallenges   OtpChallenge[]
+  pushSubscriptions PushSubscription[]
   /// Verwaltungsrechte (nur per scripts/admin.ts vergeben)
   isAdmin         Boolean   @default(false)
   /// Gesetzt bei Löschung/Anonymisierung des Kontos
@@ -375,4 +376,19 @@ model TeamInvitation {
   restaurant   Restaurant @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
 
   @@index([restaurantId])
+}
+
+/// Web-Push-Abonnement eines Geräts/Browsers (VAPID). Ungültige Abonnements werden beim Versand automatisch entfernt.
+model PushSubscription {
+  id         String    @id @default(uuid())
+  userId     String
+  endpoint   String    @unique
+  p256dh     String
+  auth       String
+  userAgent  String?
+  createdAt  DateTime  @default(now())
+  lastSentAt DateTime?
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
 }

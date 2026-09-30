@@ -1,5 +1,6 @@
 import { prisma } from '../db';
 import { deliver } from './notify';
+import { pushToEmail } from './push';
 
 /**
  * E-Mail-Benachrichtigungen zu Bewerbungen, Zusagen usw. Sie laufen "fire and forget": ein Fehler beim Versand
@@ -10,8 +11,11 @@ const fmt = (d: Date) => d.toLocaleString('de-DE', { weekday: 'short', day: '2-d
 const euro = (c: number) => (c / 100).toLocaleString('de-DE', { style: 'currency', currency: 'EUR' });
 const FOOTER = '\n\n–\nGastroEvolution SmartShift Swap\nDiese Nachricht wurde automatisch erzeugt.';
 
+/** E-Mail und – falls das Gerät abonniert hat – Push-Nachricht (nur Betreff, ohne Details: erscheint auf dem Sperrbildschirm). */
 async function mail(to: string, subject: string, body: string) {
   try { await deliver('EMAIL', to, body + FOOTER, subject); } catch { /* bereits protokolliert */ }
+  const app = body.includes('/app/') ? 'app' : 'jobs'; // Nachrichten an Betriebe verlinken auf /app/, an Aushilfen auf /jobs/
+  await pushToEmail(to, { title: subject, body: 'Öffne SmartShift Swap für Details.', url: `/${app}/`, tag: subject.slice(0, 40) }).catch(() => {});
 }
 const run = (p: Promise<unknown>) => { p.catch((e) => console.error('[notifications]', (e as Error).message)); };
 

@@ -98,3 +98,10 @@ Sobald ein Schlüssel aktiv ist, wertet der Worker fehlendes Einchecken automati
 
 ### Dienste
 `systemctl status smartshift smartshift-worker` · Logs `journalctl -u smartshift -f` · Health `curl https://jobs.gastroevolution.de/health`
+
+### Push-Nachrichten aufs Handy einrichten
+1. Schlüssel erzeugen: `cd /opt/smartshift/backend && set -a && . /etc/smartshift.env && set +a && npx tsx scripts/vapid.ts`
+2. Die drei Zeilen (`VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT`) in `/etc/smartshift.env` eintragen, danach `systemctl restart smartshift smartshift-worker`.
+3. In der App erscheint dann unter „Profil“ (Aushilfen) bzw. „Einstellungen“ (Betriebe) der Schalter „Auf diesem Gerät aktivieren“.
+Den privaten Schlüssel geheim halten und sichern; bei einem neuen Schlüssel müssen alle Geräte die Benachrichtigungen neu aktivieren.
+Push kommt nur an, wenn der Browser die Erlaubnis hat; auf dem iPhone muss die Seite über „Teilen → Zum Home-Bildschirm“ installiert sein.

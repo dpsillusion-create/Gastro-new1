@@ -309,6 +309,7 @@ async function start() {
   // Manager verwalten Bewerber, Anwesenheit und Bewertungen; Ausschreiben, Team und Schnittstelle bleiben dem Inhaber vorbehalten
   $('shiftForm').closest('.card').hidden = !owner; $('integrations').hidden = !owner; $('team').hidden = !owner;
   TotpUI.mount($('security'), { api, show, enabled: me.totpEnabled, onChange: () => start() });
+  PushUI.mount($('push'), { api, show, swScope: '/app/' });
   if (owner) { renderIntegrations(); renderTeam(); }
   await loadShifts();
 }
@@ -416,3 +417,5 @@ async function loadAdmin(tabName) {
 }
 
 loadInvite().then(() => start()).catch((e) => { logout(); show(e.message); });
+
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('/app/sw.js', { scope: '/app/' }).catch(() => {});

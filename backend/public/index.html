@@ -6,6 +6,8 @@
   <title>SmartShift Swap – Spontanaushilfen für die Gastronomie | GastroEvolution</title>
   <meta name="description" content="Schicht ausgefallen? Finden Sie kurzfristig verifizierte Aushilfen in Ihrer Region – Dienstplan, Zeiterfassung und Sofortmeldung inklusive.">
   <link rel="icon" href="data:,">
+  <link rel="manifest" href="manifest.webmanifest">
+  <meta name="theme-color" content="#0a406f">
   <link rel="stylesheet" href="fonts.css">
   <link rel="stylesheet" href="app.css">
 </head>
@@ -183,6 +185,7 @@
 
       <h2 class="list-title">Einstellungen</h2>
       <section id="team" class="card"></section>
+      <section id="push" class="card" hidden></section>
       <section id="security" class="card"></section>
       <section id="integrations" class="card"></section>
     </div>
@@ -207,6 +210,7 @@
     <a href="https://gastroevolution.de/datenschutz">Datenschutz</a>
   </footer>
   <script src="totp-ui.js" defer></script>
+  <script src="push-ui.js" defer></script>
   <script src="app.js" defer></script>
 </body>
 </html>

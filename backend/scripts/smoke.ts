@@ -510,6 +510,19 @@ async function main() {
   check('Entfernter Manager sieht den Betrieb nicht mehr', (await mgr('GET', '/api/v1/auth/me')).json?.restaurants?.length === 0);
   check('Der Inhaber kann nicht entfernt werden → 404', (await api('DELETE', `/api/v1/restaurants/${rid}/team/members/${owner!.id}`, owner!.id)).status === 404);
 
+  console.log('— Push-Nachrichten (Schnittstelle)');
+  const enabled = !!process.env.VAPID_PUBLIC_KEY;
+  const pk = await api('GET', '/api/v1/push/public-key', owner!.id);
+  check(enabled ? 'öffentlicher VAPID-Schlüssel wird ausgeliefert' : 'ohne VAPID-Schlüssel → 404 (Funktion aus)', enabled ? pk.status === 200 && pk.json.publicKey === process.env.VAPID_PUBLIC_KEY : pk.status === 404, pk);
+  check('ohne Login → 401', (await api('GET', '/api/v1/push/public-key', null)).status === 401);
+  const sub = { endpoint: 'https://push.example.test/abc123', keys: { p256dh: 'B'.repeat(87), auth: 'a'.repeat(22) } };
+  check('http-Endpunkt → 400', (await api('POST', '/api/v1/push/subscribe', owner!.id, { ...sub, endpoint: 'http://push.example.test/x' })).status === 400);
+  check('fehlende Schlüssel → 400', (await api('POST', '/api/v1/push/subscribe', owner!.id, { endpoint: sub.endpoint })).status === 400);
+  check('Gerät anmelden → 204', (await api('POST', '/api/v1/push/subscribe', owner!.id, sub)).status === 204);
+  check('dasselbe Gerät nochmal → 204 (kein Duplikat)', (await api('POST', '/api/v1/push/subscribe', owner!.id, sub)).status === 204 && (await prisma.pushSubscription.count({ where: { endpoint: sub.endpoint } })) === 1);
+  check('Abmelden durch einen anderen Nutzer löscht nichts', (await api('POST', '/api/v1/push/unsubscribe', stranger!.id, { endpoint: sub.endpoint })).status === 204 && (await prisma.pushSubscription.count({ where: { endpoint: sub.endpoint } })) === 1);
+  check('Abmelden durch den Besitzer → Gerät entfernt', (await api('POST', '/api/v1/push/unsubscribe', owner!.id, { endpoint: sub.endpoint })).status === 204 && (await prisma.pushSubscription.count({ where: { endpoint: sub.endpoint } })) === 0);
+
   console.log('— Verwaltung');
   const admin = await prisma.user.create({ data: { email: 'admin@smoketest.invalid', emailVerifiedAt: new Date(), isAdmin: true } });
   const A = (m: string, p: string, b?: unknown, user = admin.id) => api(m, '/api/v1/admin' + p, user, b);
