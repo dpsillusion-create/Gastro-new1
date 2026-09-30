@@ -25,6 +25,6 @@ main().catch((e) => {
   console.error('✘ Fehler:', e.message);
   if (/EAUTH|Invalid login|535/.test(e.message)) console.error('→ Benutzername oder Passwort falsch. Bei Strato: die vollständige E-Mail-Adresse als Benutzer, das Postfach-Passwort.');
   if (/ETIMEDOUT|ECONNREFUSED|ENOTFOUND|EAI_AGAIN/.test(e.message)) console.error('→ Server nicht erreichbar: SMTP_HOST und SMTP_PORT prüfen (Strato: smtp.strato.de, Port 465) und ob die Firewall ausgehend Port 465/587 erlaubt.');
-  if (/sender|from|553|550/i.test(e.message)) console.error('→ Absender abgelehnt: MAIL_FROM muss eine Adresse des angemeldeten Postfachs (bzw. Ihrer Domain) sein.');
+  if (/\b55[03]\b|sender (address )?rejected|not (owned|allowed)/i.test(e.message)) console.error('→ Absender abgelehnt: MAIL_FROM muss eine Adresse des angemeldeten Postfachs (bzw. Ihrer Domain) sein.');
   process.exit(1);
 });
