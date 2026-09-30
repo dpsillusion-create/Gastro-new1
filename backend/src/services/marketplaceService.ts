@@ -47,7 +47,7 @@ export async function searchShifts(i: SearchInput) {
         AND s.latitude  BETWEEN ${b.minLat} AND ${b.maxLat}
         AND s.longitude BETWEEN ${b.minLon} AND ${b.maxLon}
         AND NOT EXISTS (SELECT 1 FROM "ShiftApplication" a
-                        WHERE a."shiftId" = s.id AND a."freelancerId" = ${i.freelancerId})
+                        WHERE a."shiftId" = s.id AND a."freelancerId" = ${i.freelancerId} AND a.status <> 'WITHDRAWN')
     ) t
     WHERE t."distanceKm" <= ${i.radiusKm}
     ORDER BY t."distanceKm", t."startTime"
@@ -63,11 +63,19 @@ export async function applyToShift(
   if (!shift) throw notFound('Schicht nicht gefunden');
   if (shift.status !== 'OPEN' || shift.startTime <= new Date()) throw conflict('Schicht nicht mehr offen');
   if (!freelancer.verifiedSkills.includes(shift.requiredSkill)) throw forbidden('Erforderliche Fähigkeit nicht verifiziert');
-  return prisma.shiftApplication.upsert({
-    where: { shiftId_freelancerId: { shiftId, freelancerId: freelancer.id } },
-    create: { shiftId, freelancerId: freelancer.id },
-    update: {},
+  const existing = await prisma.shiftApplication.findUnique({ where: { shiftId_freelancerId: { shiftId, freelancerId: freelancer.id } } });
+  if (!existing) return prisma.shiftApplication.create({ data: { shiftId, freelancerId: freelancer.id } });
+  if (existing.status === 'WITHDRAWN') // erneut bewerben nach Zurückziehen
+    return prisma.shiftApplication.update({ where: { id: existing.id }, data: { status: 'PENDING', decidedAt: null } });
+  return existing; // idempotent
+}
+
+/** Freelancer zieht eine noch unentschiedene Bewerbung zurück. */
+export async function withdrawApplication(freelancerId: string, shiftId: string) {
+  const r = await prisma.shiftApplication.updateMany({
+    where: { shiftId, freelancerId, status: 'PENDING' }, data: { status: 'WITHDRAWN', decidedAt: new Date() },
   });
+  if (r.count !== 1) throw conflict('Keine offene Bewerbung zum Zurückziehen');
 }
 
 /**

@@ -139,6 +139,35 @@ async function main() {
   check('DEÜV-Export enthält SV-Nummer', exp.json?.data?.versicherungsnummer === '15070649C103' && exp.json?.missingFields?.length === 0, exp);
   check('Export für Fremde → 403', (await api('GET', `/api/v1/marketplace/shifts/${shiftId}/sofortmeldung-export`, stranger!.id)).status === 403);
 
+  console.log('— Aushilfe registriert sich selbst');
+  const freg = { email: 'aushilfe@smoketest.invalid', password: 'ein-langes-passwort', displayName: 'Selbst Registriert', zip: '20359', city: 'Hamburg',
+    skills: ['BAR'], birthDate: '1949-06-07', socialSecurityNumber: '15070649C103', taxId: '86095742719', privacyConsent: true };
+  check('ohne Einwilligung → 400', (await api('POST', '/api/v1/freelancers/register', null, { ...freg, privacyConsent: false })).status === 400);
+  check('ungültige Steuer-ID → 400', (await api('POST', '/api/v1/freelancers/register', null, { ...freg, taxId: '86095742710' })).status === 400);
+  const fr = await api('POST', '/api/v1/freelancers/register', null, freg);
+  check('Registrierung → 201', fr.status === 201 && !!fr.json.token, fr);
+  const fauth = async (m: string, p: string, b?: unknown) => {
+    const r = await fetch(BASE + p, { method: m, headers: { 'content-type': 'application/json', authorization: `Bearer ${fr.json.token}` }, body: b ? JSON.stringify(b) : undefined });
+    const t = await r.text(); return { status: r.status, json: t ? JSON.parse(t) : null };
+  };
+  const prof = await fauth('GET', '/api/v1/freelancers/me');
+  check('Profil: unverifiziert, Skills angegeben', prof.json?.verified === false && prof.json?.claimedSkills?.[0] === 'BAR', prof);
+  check('Suche vor Verifizierung → 403', (await fauth('GET', '/api/v1/marketplace/search')).status === 403);
+  await prisma.freelancer.updateMany({ where: { user: { email: freg.email } }, data: { verified: true, verifiedSkills: ['BAR'] } });
+  const shift2 = await api('POST', '/api/v1/marketplace/shifts', owner!.id, { ...good, startTime: new Date(Date.now() + 30 * 3600_000).toISOString(), endTime: new Date(Date.now() + 38 * 3600_000).toISOString() });
+  const s2 = await fauth('GET', '/api/v1/marketplace/search');
+  check('nach Verifizierung: Schicht in der Suche', s2.status === 200 && s2.json.shifts.some((x: { id: string }) => x.id === shift2.json.id), s2);
+  check('Bewerben → 201', (await fauth('POST', `/api/v1/marketplace/shifts/${shift2.json.id}/apply`)).status === 201);
+  const apps1 = await fauth('GET', '/api/v1/freelancers/me/applications');
+  check('Bewerbung PENDING, Straße noch verborgen', apps1.json?.[0]?.status === 'PENDING' && apps1.json[0].shift.restaurant.street === undefined, apps1);
+  check('Zurückziehen → 204', (await fauth('POST', `/api/v1/marketplace/shifts/${shift2.json.id}/withdraw`)).status === 204);
+  check('nach Zurückziehen nicht mehr in Bewerbungen', (await fauth('GET', '/api/v1/freelancers/me/applications')).json?.length === 0);
+  check('erneut bewerben → 201', (await fauth('POST', `/api/v1/marketplace/shifts/${shift2.json.id}/apply`)).status === 201);
+  const fid = (await prisma.freelancer.findFirstOrThrow({ where: { user: { email: freg.email } } })).id;
+  check('Wirt bestätigt → 200', (await api('POST', `/api/v1/marketplace/shifts/${shift2.json.id}/accept`, owner!.id, { freelancerId: fid })).status === 200);
+  const apps2 = await fauth('GET', '/api/v1/freelancers/me/applications');
+  check('nach Bestätigung: ACCEPTED mit Adresse', apps2.json?.[0]?.status === 'ACCEPTED' && apps2.json[0].shift.restaurant.street === 'Teststr. 1', apps2);
+
   console.log('— No-Show');
   const ns = await registerNoShow(shiftId, new Date(start.getTime() + 20 * 60_000));
   check('No-Show senkt Score auf 0.75 und sperrt', !ns.alreadyRecorded && ns.reliabilityScore === 0.75 && ns.suspended, ns);

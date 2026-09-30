@@ -16,6 +16,7 @@ export function createApp() {
   app.use(express.json({ limit: '50kb' }));
   // Weboberfläche für Gastronomen (statisch, CSP-konform ohne Inline-Skripte)
   app.use('/app', express.static(path.resolve(process.cwd(), 'public'), { index: 'index.html', maxAge: '5m' }));
+  app.use('/jobs', express.static(path.resolve(process.cwd(), 'public/jobs'), { index: 'index.html', maxAge: '5m' })); // Aushilfen-App (PWA)
   app.use(systemRouter); // GET / und GET /health – vor den API-Routen, ohne Rate-Limit
   app.use('/api/v1/marketplace', rateLimit({ windowMs: 60_000, limit: 120 }), marketplaceRouter);
 

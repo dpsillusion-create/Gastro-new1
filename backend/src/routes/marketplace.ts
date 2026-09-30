@@ -2,7 +2,7 @@ import { Router, type NextFunction, type Request, type RequestHandler, type Resp
 import { z } from 'zod';
 import { prisma } from '../db';
 import { DEFAULT_RADIUS_KM, MAX_RADIUS_KM, MIN_WAGE_CENTS } from '../config';
-import { badRequest, conflict, notFound, unauthorized } from '../errors';
+import { badRequest, conflict, forbidden, notFound, unauthorized } from '../errors';
 import { assertRestaurantManager, assertRestaurantOwner, authenticate, requireFreelancer } from '../middleware/auth';
 import { decrypt } from '../services/crypto';
 import * as svc from '../services/marketplaceService';
@@ -140,6 +140,17 @@ marketplaceRouter.post('/shifts/:id/cancel', async (req, res, next) => {
     await assertRestaurantOwner(uid(req), shift.restaurantId);
     const r = await prisma.marketplaceShift.updateMany({ where: { id: shiftId, status: 'OPEN' }, data: { status: 'CANCELLED' } });
     if (r.count !== 1) throw conflict('Nur offene Schichten können zurückgezogen werden');
+    res.status(204).end();
+  } catch (err) { next(err); }
+});
+
+/** Freelancer: eigene offene Bewerbung zurückziehen. */
+marketplaceRouter.post('/shifts/:id/withdraw', async (req, res, next) => {
+  try {
+    const shiftId = idParam.parse(req.params.id);
+    const f = await prisma.freelancer.findUnique({ where: { userId: uid(req) }, select: { id: true } });
+    if (!f) throw forbidden('Kein Freelancer-Profil');
+    await svc.withdrawApplication(f.id, shiftId);
     res.status(204).end();
   } catch (err) { next(err); }
 });

@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0a406f">
+  <title>Schichten in deiner Nähe – GastroEvolution Jobs</title>
+  <meta name="description" content="Spontan in der Gastro dazuverdienen: Schichten in deiner Nähe per Wisch annehmen.">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icon-192.png">
+  <link rel="apple-touch-icon" href="icon-192.png">
+  <link rel="stylesheet" href="/app/fonts.css">
+  <link rel="stylesheet" href="/app/app.css">
+  <link rel="stylesheet" href="jobs.css">
+</head>
+<body>
+  <header class="top">
+    <a class="brand" href="/jobs/" id="home">
+      <span class="mark" aria-hidden="true">G</span>
+      <span><strong>GastroEvolution</strong><small>Jobs für Aushilfen</small></span>
+    </a>
+    <nav id="nav" class="nav"><a href="/app/" class="navlink">Für Betriebe</a></nav>
+    <div class="actions-top">
+      <div id="guestbox" class="row-gap">
+        <button id="goLogin" class="btn ghost" type="button">Anmelden</button>
+        <button id="goRegister" class="btn accent" type="button"><span class="long">Jetzt registrieren</span><span class="short">Start</span></button>
+      </div>
+      <div id="userbox" class="row-gap" hidden><button id="logout" class="btn ghost" type="button">Abmelden</button></div>
+    </div>
+  </header>
+
+  <main>
+    <div id="msg" class="msg" role="alert" hidden></div>
+
+    <!-- Startseite -->
+    <div id="landing">
+      <section class="hero">
+        <div class="hero-text">
+          <span class="eyebrow"><i></i>Für Servicekräfte, Köche &amp; Barkeeper</span>
+          <h1>Spontan dazuverdienen.<br><em>Schichten in deiner Nähe.</em></h1>
+          <p class="lead">Freien Abend? Restaurants und Bars in deiner Region suchen kurzfristig Verstärkung. Schicht ansehen, per Wisch zusagen, hingehen – Papierkram und Meldung übernimmt der Betrieb automatisch.</p>
+          <div class="cta">
+            <button id="ctaRegister" class="btn accent lg" type="button">Kostenlos registrieren <span aria-hidden="true">→</span></button>
+            <span class="fine">Umkreis bis 25 km · du entscheidest, was du annimmst</span>
+          </div>
+        </div>
+        <div class="hero-visual" aria-hidden="true">
+          <div class="ticket">
+            <div class="ticket-head"><span>Schicht in deiner Nähe</span><span>2,4 km</span></div>
+            <dl>
+              <div><dt>Position</dt><dd>Barkeeper</dd></div>
+              <div><dt>Fr · 18–02 Uhr</dt><dd>8 Std.</dd></div>
+              <div><dt>Stundensatz</dt><dd>19,00 €</dd></div>
+              <div class="rule"></div>
+              <div class="total"><dt>Verdienst ca.</dt><dd>152,00 €</dd></div>
+            </dl>
+            <div class="stamp">Zusagen →</div>
+            <small class="sample">Beispiel</small>
+          </div>
+        </div>
+      </section>
+      <section class="section">
+        <h2>So funktioniert’s</h2>
+        <ol class="steps">
+          <li><b>1</b><h3>Registrieren</h3><p>Fähigkeiten und Pflichtangaben eintragen. Wir prüfen dein Profil einmalig.</p></li>
+          <li><b>2</b><h3>Schicht wählen</h3><p>Passende Schichten im Umkreis – rechts wischen heißt „Interesse“.</p></li>
+          <li><b>3</b><h3>Bestätigung abwarten</h3><p>Der Betrieb wählt aus. Bei Zusage siehst du die Adresse und checkst vor Ort ein.</p></li>
+        </ol>
+      </section>
+    </div>
+
+    <!-- Anmeldung / Registrierung -->
+    <section id="auth" class="auth" hidden>
+      <div class="card narrow">
+        <div class="tabs" role="tablist">
+          <button id="tabLogin" class="tab active" type="button" role="tab">Anmelden</button>
+          <button id="tabRegister" class="tab" type="button" role="tab">Registrieren</button>
+        </div>
+        <form id="loginForm" class="form">
+          <label>E-Mail<input name="email" type="email" autocomplete="username" required></label>
+          <label>Passwort<input name="password" type="password" autocomplete="current-password" required></label>
+          <button class="btn accent block">Anmelden</button>
+        </form>
+        <form id="registerForm" class="form" hidden>
+          <label>Vor- und Nachname<input name="displayName" autocomplete="name" required minlength="2"></label>
+          <div class="row">
+            <label>PLZ (Wohnort)<input name="zip" inputmode="numeric" pattern="\d{5}" maxlength="5" autocomplete="postal-code" required></label>
+            <label class="grow">Ort<input name="city" autocomplete="address-level2" required></label>
+          </div>
+          <fieldset class="skills"><legend>Was kannst du?</legend>
+            <label class="check"><input type="checkbox" name="skills" value="BAR"> Bar</label>
+            <label class="check"><input type="checkbox" name="skills" value="SERVICE"> Service</label>
+            <label class="check"><input type="checkbox" name="skills" value="KITCHEN"> Küche</label>
+            <label class="check"><input type="checkbox" name="skills" value="DISHWASHING"> Spülküche</label>
+            <small>Deine Angaben werden vor der Freischaltung geprüft.</small>
+          </fieldset>
+          <label>Geburtsdatum<input name="birthDate" type="date" autocomplete="bday" required></label>
+          <label>Sozialversicherungsnummer<input name="socialSecurityNumber" autocomplete="off" placeholder="12 Zeichen, z. B. 15070649C103" required></label>
+          <label>Steuer-Identifikationsnummer<input name="taxId" inputmode="numeric" autocomplete="off" maxlength="11" placeholder="11 Ziffern" required></label>
+          <p class="hint">Diese Angaben sind für die gesetzliche Sofortmeldung bei kurzfristiger Beschäftigung nötig. Sie werden verschlüsselt gespeichert und nur dafür verwendet.</p>
+          <label>E-Mail<input name="email" type="email" autocomplete="username" required></label>
+          <label>Passwort (mind. 10 Zeichen)<input name="password" type="password" minlength="10" autocomplete="new-password" required></label>
+          <label class="check consent"><input type="checkbox" name="privacyConsent" required>
+            <span>Ich stimme der Verarbeitung meiner Daten zur Vermittlung von Schichten und zur Sofortmeldung zu. <a href="https://gastroevolution.de/datenschutz" target="_blank" rel="noopener">Datenschutzerklärung</a></span></label>
+          <button class="btn accent block">Kostenlos registrieren</button>
+        </form>
+      </div>
+    </section>
+
+    <!-- App -->
+    <div id="appview" hidden>
+      <div id="banner" class="banner" hidden></div>
+
+      <section id="tabShifts" class="pane">
+        <div class="toolbar">
+          <label class="inline">Umkreis
+            <select id="radius"><option value="5">5 km</option><option value="10">10 km</option><option value="20" selected>20 km</option><option value="25">25 km</option></select>
+          </label>
+          <button id="useLocation" class="btn ghost small" type="button">Mein Standort</button>
+        </div>
+        <div id="deck" class="deck" aria-live="polite"></div>
+        <div id="deckButtons" class="deck-buttons" hidden>
+          <button id="btnSkip" class="round no" type="button" aria-label="Überspringen">✕</button>
+          <button id="btnApply" class="round yes" type="button" aria-label="Interesse">✓</button>
+        </div>
+        <p class="hint center" id="deckHint">Rechts wischen = Interesse · links = überspringen</p>
+      </section>
+
+      <section id="tabApps" class="pane" hidden>
+        <h2 class="list-title">Meine Bewerbungen</h2>
+        <div id="apps"></div>
+        <p id="appsEmpty" class="hint" hidden>Noch keine Bewerbungen. Wische im Reiter „Schichten“ nach rechts, um dich zu bewerben.</p>
+      </section>
+
+      <section id="tabProfile" class="pane" hidden>
+        <h2 class="list-title">Mein Profil</h2>
+        <div id="profile" class="card"></div>
+      </section>
+    </div>
+  </main>
+
+  <nav id="tabbar" class="tabbar" hidden aria-label="Bereiche">
+    <button data-tab="tabShifts" class="on" type="button">Schichten</button>
+    <button data-tab="tabApps" type="button">Bewerbungen <i id="appBadge" hidden></i></button>
+    <button data-tab="tabProfile" type="button">Profil</button>
+  </nav>
+
+  <footer>
+    <span>© GastroEvolution</span>
+    <a href="https://gastroevolution.de/impressum">Impressum</a>
+    <a href="https://gastroevolution.de/datenschutz">Datenschutz</a>
+  </footer>
+  <script src="jobs.js" defer></script>
+</body>
+</html>

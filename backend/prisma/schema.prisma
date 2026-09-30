@@ -114,6 +114,10 @@ model Freelancer {
   displayName    String
   /// Nur durch Admin/Verifizierungsprozess gesetzte Fähigkeiten
   verifiedSkills Skill[]
+  /// Vom Nutzer angegebene Fähigkeiten – werden erst durch die Verifizierung zu verifiedSkills
+  claimedSkills  Skill[]  @default([])
+  /// Zeitpunkt der Datenschutz-Einwilligung (Nachweis)
+  privacyConsentAt DateTime?
   verified       Boolean  @default(false)
   ratingSum      Int      @default(0)
   ratingCount    Int      @default(0)

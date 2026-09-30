@@ -1,9 +1,9 @@
 import { badRequest } from '../errors';
 
 /** Adresse → Koordinaten über OpenStreetMap Nominatim (max. 1 Anfrage/s laut Nutzungsrichtlinie; nur bei Registrierung). */
-export async function geocodeAddress(street: string, zip: string, city: string) {
+export async function geocodeAddress(street: string | undefined, zip: string, city: string) {
   const url = new URL('https://nominatim.openstreetmap.org/search');
-  url.search = new URLSearchParams({ format: 'jsonv2', limit: '1', countrycodes: 'de', street, postalcode: zip, city }).toString();
+  url.search = new URLSearchParams({ format: 'jsonv2', limit: '1', countrycodes: 'de', ...(street ? { street } : {}), postalcode: zip, city }).toString();
   let data: Array<{ lat: string; lon: string }>;
   try {
     const res = await fetch(url, {

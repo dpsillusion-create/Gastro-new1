@@ -1,0 +1,48 @@
+/* Ergänzungen zur Aushilfen-App; Basis-Design kommt aus /app/app.css */
+main { max-width: 1000px; }
+#appview { max-width: 520px; margin: 0 auto; padding-bottom: 84px; }
+.pane { padding-top: 14px; }
+.center { text-align: center; }
+.small { padding: 7px 12px; font-size: 14px; }
+.toolbar { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 12px; }
+label.inline { flex-direction: row; align-items: center; gap: 8px; font-weight: 600; }
+label.inline select { width: auto; padding: 7px 10px; }
+fieldset.skills { border: 1px solid var(--line); border-radius: 10px; padding: 10px 14px 12px; margin: 0; display: flex; flex-wrap: wrap; gap: 8px 18px; }
+fieldset.skills legend { font-size: 14px; font-weight: 600; padding: 0 6px; } fieldset.skills small { flex-basis: 100%; }
+label.check { flex-direction: row; align-items: center; gap: 8px; font-weight: 500; } label.check input { width: auto; }
+label.consent { align-items: flex-start; font-size: 13px; font-weight: 400; color: var(--muted); } label.consent input { margin-top: 3px; }
+
+/* Wisch-Karten */
+.deck { position: relative; height: 420px; touch-action: pan-y; user-select: none; }
+.swipe { position: absolute; inset: 0; background: var(--card); border: 1px solid var(--line); border-radius: 18px; padding: 22px;
+  box-shadow: 0 18px 40px -22px rgba(16,36,55,.35); display: flex; flex-direction: column; cursor: grab; will-change: transform; }
+.swipe.next { transform: scale(.95) translateY(12px); opacity: .7; pointer-events: none; cursor: default; }
+.swipe.dragging { cursor: grabbing; transition: none; } .swipe.anim { transition: transform .25s ease, opacity .25s ease; }
+.swipe .role { font: 600 30px/1.1 var(--serif); margin: 8px 0 4px; } .swipe .where { color: var(--muted); }
+.swipe .rate { font: 600 28px var(--mono); margin: 18px 0 2px; color: var(--brand); } .swipe .est { color: var(--muted); font-size: 14px; }
+.swipe .when { margin-top: 16px; font-weight: 600; } .swipe .req { margin-top: 14px; color: var(--muted); font-size: 15px; }
+.swipe .dist { position: absolute; top: 20px; right: 20px; }
+.swipe .stampyes, .swipe .stampno { position: absolute; top: 24px; padding: 2px 12px; border: 3px solid; border-radius: 10px; font: 700 22px var(--serif); opacity: 0; }
+.swipe .stampyes { left: 20px; color: var(--green); transform: rotate(-10deg); } .swipe .stampno { right: 20px; color: #a34d3d; transform: rotate(10deg); }
+.deck-buttons { display: flex; justify-content: center; gap: 28px; margin: 18px 0 8px; }
+.round { width: 62px; height: 62px; border-radius: 50%; border: 2px solid var(--line); background: var(--card); font-size: 26px; cursor: pointer; box-shadow: 0 6px 16px -8px rgba(16,36,55,.4); }
+.round.yes { color: var(--green); border-color: var(--green); } .round.no { color: #a34d3d; border-color: #d9b9b1; }
+.round:disabled { opacity: .5; cursor: wait; }
+.empty { border: 2px dashed var(--line); border-radius: 18px; padding: 40px 20px; text-align: center; color: var(--muted); height: 100%; display: flex; flex-direction: column; justify-content: center; gap: 14px; align-items: center; }
+
+.banner { margin: 14px 0 0; padding: 12px 14px; border-radius: 10px; font-size: 14px; background: #fff6e5; border: 1px solid #f0d7a7; color: #6b4a00; }
+.banner.err { background: #fdecea; border-color: #f5c6c0; color: #7a1f14; }
+.app { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px; margin-bottom: 12px; }
+.app h3 { margin: 0; font-size: 17px; } .app .addr { margin-top: 10px; padding: 10px 12px; background: #e8f3ea; border-radius: 9px; color: #24492f; font-size: 15px; }
+.pill.PENDING { background: #fff2d9; color: #8a5a00; } .pill.ACCEPTED { background: #e8f3ea; color: var(--green); } .pill.REJECTED { color: var(--muted); }
+.kv { display: flex; justify-content: space-between; padding: 9px 0; border-bottom: 1px dashed var(--line); font-size: 15px; } .kv:last-child { border: 0; }
+.kv span:first-child { color: var(--muted); }
+
+.tabbar { position: fixed; left: 0; right: 0; bottom: 0; z-index: 20; display: flex; background: rgba(255,255,255,.96); backdrop-filter: blur(8px);
+  border-top: 1px solid var(--line); padding-bottom: env(safe-area-inset-bottom); }
+.tabbar button { flex: 1; padding: 14px 6px; border: 0; background: none; font: 600 14px var(--sans); color: var(--muted); cursor: pointer; position: relative; }
+.tabbar button.on { color: var(--accent); box-shadow: inset 0 3px 0 var(--accent); }
+.tabbar i { position: absolute; top: 8px; margin-left: 4px; width: 9px; height: 9px; border-radius: 50%; background: var(--accent); }
+body.in-app footer { display: none; }
+
+.app .hint { margin: 10px 0 12px; }
