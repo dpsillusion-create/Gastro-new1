@@ -1,0 +1,21 @@
+[Unit]
+Description=SmartShift Swap Worker (No-Show, Webhooks)
+After=network.target postgresql.service
+
+[Service]
+User=smartshift
+WorkingDirectory=/opt/smartshift/backend
+EnvironmentFile=/etc/smartshift.env
+Environment=NODE_ENV=production
+ExecStart=/usr/bin/node dist/src/worker.js
+Restart=on-failure
+RestartSec=3
+# Härtung
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/smartshift
+
+[Install]
+WantedBy=multi-user.target
