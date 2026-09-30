@@ -2,7 +2,7 @@ import { Prisma, Skill } from '@prisma/client';
 import { prisma } from '../db';
 import { conflict, forbidden, notFound } from '../errors';
 import { onShiftMatched } from '../integrations/timeTracking';
-import { assertComplianceValidated, assertRestaurantManager } from '../middleware/auth';
+import { assertComplianceValidated, assertRestaurantManager, assertRestaurantOwner } from '../middleware/auth';
 import { dispatchPendingWebhooks } from './webhooks';
 import { boundingBox } from './geo';
 
@@ -13,11 +13,11 @@ export interface CreateShiftInput {
 
 /** Wirt schreibt eine Schicht aus. Geo-Koordinaten kommen vom Restaurant (nie vom Client). */
 export async function createShift(userId: string, input: CreateShiftInput) {
-  await assertRestaurantManager(userId, input.restaurantId);
+  await assertRestaurantOwner(userId, input.restaurantId);
   const r = await prisma.restaurant.findUnique({ where: { id: input.restaurantId } });
   if (!r) throw notFound('Restaurant nicht gefunden');
   return prisma.marketplaceShift.create({
-    data: { ...input, latitude: r.latitude, longitude: r.longitude, createdById: userId },
+    data: { ...input, status: 'OPEN', latitude: r.latitude, longitude: r.longitude, createdById: userId },
   });
 }
 

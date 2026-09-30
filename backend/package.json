@@ -6,6 +6,7 @@
   "scripts": {
     "build": "tsc -p .",
     "typecheck": "tsc -p . --noEmit",
+    "smoke": "tsx scripts/smoke.ts",
     "worker": "node dist/src/worker.js",
     "start": "node dist/src/server.js",
     "dev": "tsx watch src/server.ts",

@@ -35,6 +35,19 @@ export async function assertRestaurantManager(userId: string, restaurantId: stri
   if (!m || m.role === 'STAFF') throw forbidden('Kein Zugriff auf dieses Restaurant');
 }
 
+/**
+ * Nur der Inhaber (Rolle OWNER = "RESTAURANT_OWNER") des konkreten Restaurants darf fortfahren.
+ * Prüft die Zuordnung in der DB → verhindert ID-Spoofing (fremde restaurantId im Body).
+ * Nicht existierende und fremde Restaurants liefern identisch 403, damit keine Existenz verraten wird.
+ */
+export async function assertRestaurantOwner(userId: string, restaurantId: string) {
+  const m = await prisma.restaurantMember.findUnique({
+    where: { userId_restaurantId: { userId, restaurantId } },
+    select: { role: true },
+  });
+  if (!m || m.role !== 'OWNER') throw forbidden('Nur der Inhaber des Restaurants darf Schichten ausschreiben');
+}
+
 /** Lädt das Freelancer-Profil: verifiziert und nicht gesperrt (abgelaufene Sperren werden dabei aufgehoben). */
 export async function requireFreelancer(userId: string) {
   let f = await prisma.freelancer.findUnique({ where: { userId } });

@@ -1,7 +1,7 @@
 import { Router, type NextFunction, type Request, type RequestHandler, type Response } from 'express';
 import { z } from 'zod';
 import { prisma } from '../db';
-import { DEFAULT_RADIUS_KM, MAX_RADIUS_KM } from '../config';
+import { DEFAULT_RADIUS_KM, MAX_RADIUS_KM, MIN_WAGE_CENTS } from '../config';
 import { badRequest, unauthorized } from '../errors';
 import { assertRestaurantManager, authenticate, requireFreelancer } from '../middleware/auth';
 import { decrypt } from '../services/crypto';
@@ -12,18 +12,23 @@ const wrap = (fn: (req: Request, res: Response) => Promise<unknown>): RequestHan
   (req, res, next: NextFunction) => { fn(req, res).catch(next); };
 const uid = (req: Request) => req.userId ?? (() => { throw unauthorized(); })();
 
+const ROLES = ['Barkeeper', 'Service', 'Servicekraft', 'Koch', 'Küchenhilfe', 'Spüler'] as const;
+
 const createSchema = z.object({
-  restaurantId: z.string().uuid(),
-  role: z.string().min(2).max(80),
+  restaurantId: z.string().uuid('restaurantId muss eine UUID sein'),
+  role: z.enum(ROLES, { errorMap: () => ({ message: `role muss eines von ${ROLES.join(', ')} sein` }) }),
   requiredSkill: Skill,
-  requirements: z.string().max(500).optional(),
-  activityKey: z.string().regex(/^\d{9}$/).optional(),
-  hourlyRateCents: z.number().int().min(1200).max(20000), // 12–200 €/h (Mindestlohn-Plausibilität)
+  requirements: z.string().trim().max(500).optional(),
+  activityKey: z.string().regex(/^\d{9}$/, 'activityKey: 9 Ziffern').optional(),
+  hourlyRateCents: z.number().int(`hourlyRateCents muss eine ganze Zahl in Cent sein`)
+    .min(MIN_WAGE_CENTS, `Stundensatz unter dem Mindestlohn (${MIN_WAGE_CENTS / 100} €/h)`)
+    .max(20000, 'Stundensatz unplausibel hoch'),
   startTime: z.coerce.date(),
   endTime: z.coerce.date(),
-}).refine(v => v.endTime > v.startTime, { message: 'endTime muss nach startTime liegen' })
-  .refine(v => v.endTime.getTime() - v.startTime.getTime() <= 14 * 3600_000, { message: 'Schicht max. 14 Stunden' })
-  .refine(v => v.endTime > new Date(), { message: 'Schicht liegt in der Vergangenheit' });
+}).strict()
+  .refine(v => v.startTime > new Date(), { path: ['startTime'], message: 'startTime muss in der Zukunft liegen' })
+  .refine(v => v.endTime > v.startTime, { path: ['endTime'], message: 'endTime muss nach startTime liegen' })
+  .refine(v => v.endTime.getTime() - v.startTime.getTime() <= 14 * 3600_000, { path: ['endTime'], message: 'Schicht max. 14 Stunden' });
 
 const searchSchema = z.object({
   lat: z.coerce.number().min(-90).max(90).optional(),
@@ -37,12 +42,19 @@ const idParam = z.string().uuid();
 export const marketplaceRouter = Router();
 marketplaceRouter.use(authenticate);
 
-/** Wirt: offene Schicht erstellen. */
-marketplaceRouter.post('/shifts', wrap(async (req, res) => {
-  const input = createSchema.parse(req.body);
-  const shift = await svc.createShift(uid(req), input);
-  res.status(201).json(shift);
-}));
+/**
+ * Inhaber: offene Schicht erstellen.
+ * 201 Created | 400 Validierung | 401 nicht angemeldet | 403 kein Inhaber dieses Restaurants | 500 unerwartet
+ */
+marketplaceRouter.post('/shifts', async (req, res, next) => {
+  try {
+    const input = createSchema.parse(req.body); // 400 bei Fehlern (ZodError → Error-Handler)
+    const shift = await svc.createShift(uid(req), input); // prüft Inhaberschaft (403), setzt status OPEN
+    res.status(201).location(`/api/v1/marketplace/shifts/${shift.id}`).json(shift);
+  } catch (err) {
+    next(err); // zentraler Handler in app.ts: ZodError→400, HttpError→Status, sonst 500 ohne Details
+  }
+});
 
 /** Freelancer: Schichten im Umkreis, passend zu verifizierten Skills. */
 marketplaceRouter.get('/search', wrap(async (req, res) => {

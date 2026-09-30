@@ -15,3 +15,8 @@ export const config = {
 /** Maximaler Suchradius (km) – Produktvorgabe. */
 export const MAX_RADIUS_KM = 25;
 export const DEFAULT_RADIUS_KM = 20;
+/**
+ * Gesetzlicher Mindestlohn in Cent/Stunde (2026: 13,90 €, ab 2027: 14,60 €).
+ * Per Umgebungsvariable MIN_WAGE_CENTS anpassbar, wenn sich der Satz ändert.
+ */
+export const MIN_WAGE_CENTS = Number(process.env.MIN_WAGE_CENTS ?? 1390);

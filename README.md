@@ -34,3 +34,7 @@ Zuverlässigkeit: `services/reliability.ts` – `registerNoShow` (−0,25, bei <
 
 **Nicht gegen eine echte Datenbank getestet** (Typecheck, Schema-Validierung und Unit-Tests laufen). Vor Produktivbetrieb prüfen:
 DEÜV-Schlüssel (Personengruppe 110, Tätigkeitsschlüssel), die Prüfziffernlogik mit echten Testdaten, Auth-Anbindung (JWT `sub`).
+
+**Durchlauf-Test gegen die echte Datenbank:** `cd backend && BASE_URL=http://127.0.0.1:3100 npm run smoke`
+(braucht die Umgebungsvariablen des Servers; legt nur Testdaten `@smoketest.invalid` an und löscht sie wieder).
+Mindestlohn: `MIN_WAGE_CENTS` (Standard 1390 = 13,90 €/h, Stand 2026).
