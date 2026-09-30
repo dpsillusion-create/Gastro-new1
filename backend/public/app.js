@@ -32,7 +32,7 @@ async function api(path, { method = 'GET', body } = {}) {
   if (res.status === 204) return null;
   let data = null;
   try { data = await res.json(); } catch { /* leere Antwort */ }
-  if (res.status === 401 && store.get()) { logout(); throw new Error('Sitzung abgelaufen – bitte erneut anmelden'); }
+  if (res.status === 401 && store.get() && data && data.error === 'UNAUTHORIZED') { logout(); throw new Error('Sitzung abgelaufen – bitte erneut anmelden'); }
   if (res.status === 429) throw new Error('Zu viele Anfragen – bitte kurz warten');
   if (!res.ok) { const err = new Error(errorText(data)); err.body = data; throw err; }
   return data;
@@ -265,6 +265,14 @@ function matchedControls(s) {
   return box;
 }
 
+// Schicht als Vorlage: Formular mit den Angaben füllen, Termin eine Woche später (gleiche Uhrzeit)
+function useAsTemplate(s) {
+  const f = $('shiftForm').elements, local = (iso) => { const d = new Date(new Date(iso).getTime() + 7 * 864e5); return new Date(d - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16); };
+  f.role.value = s.role; f.rate.value = (s.hourlyRateCents / 100).toFixed(2); f.positions.value = String(s.slotCount || 1);
+  f.start.value = local(s.startTime); f.end.value = local(s.endTime); f.requirements.value = s.requirements || ''; f.activityKey.value = s.activityKey || '';
+  $('shiftForm').scrollIntoView({ behavior: 'smooth', block: 'center' }); show('Vorlage übernommen – bitte Datum und Uhrzeit prüfen und veröffentlichen.', true);
+}
+
 function card(s) {
   const c = el('article', { class: 'shift' },
     el('header', {},
@@ -281,6 +289,7 @@ function card(s) {
     }) }, 'Zurückziehen')));
   }
   if (s.status === 'MATCHED' && s.assignment) c.append(matchedControls(s));
+  if (state.role === 'OWNER') c.append(el('div', { class: 'actions' }, el('button', { class: 'link', type: 'button', onclick: () => useAsTemplate(s) }, 'Als Vorlage für eine neue Schicht')));
   if (s.status === 'COMPLETED' && s.rating) c.append(el('div', { class: 'meta' }, `Abgeschlossen · Bewertung ${'★'.repeat(s.rating)}${'☆'.repeat(5 - s.rating)}`));
   if ((s.status === 'MATCHED' || s.status === 'COMPLETED') && s.sofortmeldung) c.append(sofortmeldungControls(s));
   return c;
@@ -303,7 +312,7 @@ async function start() {
   if (!r && !me.isAdmin) { logout(); show('Für dieses Konto ist kein Betrieb hinterlegt.'); return; }
   state.restaurantId = r ? r.id : null; state.role = r ? r.role : 'OWNER';
   $('restaurantName').textContent = r ? `${r.name} · ${me.email}` : me.email;
-  if (!r) return openAdmin();
+  if (!r) return openAdmin().catch((e) => show(e.message));
   view('dash');
   const owner = state.role === 'OWNER';
   // Manager verwalten Bewerber, Anwesenheit und Bewertungen; Ausschreiben, Team und Schnittstelle bleiben dem Inhaber vorbehalten
@@ -355,7 +364,7 @@ curl -X POST -H "Authorization: Bearer ge_…" -H "Content-Type: application/jso
 }
 
 // ---- Verwaltung (nur Administratoren) ----
-$('adminBtn').onclick = () => openAdmin();
+$('adminBtn').onclick = () => openAdmin().catch((e) => show(e.message));
 $('backBtn').onclick = () => start().catch((e) => show(e.message));
 let adminTab = 'overview';
 function openAdmin() { view('admin'); return loadAdmin('overview'); }

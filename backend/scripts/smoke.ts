@@ -8,6 +8,7 @@ import { PrismaClient } from '@prisma/client';
 import jwt from 'jsonwebtoken';
 import { encrypt } from '../src/services/crypto';
 import { totpCode } from '../src/services/totp';
+import { hashPassword } from '../src/services/password';
 import { remindAttendance, sweepNoShows } from '../src/services/reliability';
 import { remindSofortmeldung } from '../src/services/sofortmeldung';
 import { readFileSync } from 'fs';
@@ -140,8 +141,9 @@ async function main() {
   const li = await api('POST', '/api/v1/auth/login/verify', null, { challengeToken: l1.json.challengeToken, code: CODE });
   check('Login Schritt 2 → 200 + Token', li.status === 200 && !!li.json.token, li);
   check('Code nur einmal verwendbar', (await api('POST', '/api/v1/auth/login/verify', null, { challengeToken: l1.json.challengeToken, code: CODE })).status === 400);
+  const wirt = { token: li.json.token as string };
   const authed = async (m: string, p: string, b?: unknown) => {
-    const r = await fetch(BASE + p, { method: m, headers: { 'content-type': 'application/json', authorization: `Bearer ${li.json.token}` }, body: b ? JSON.stringify(b) : undefined });
+    const r = await fetch(BASE + p, { method: m, headers: { 'content-type': 'application/json', authorization: `Bearer ${wirt.token}` }, body: b ? JSON.stringify(b) : undefined });
     const t = await r.text(); return { status: r.status, json: t ? JSON.parse(t) : null };
   };
   const me = await authed('GET', '/api/v1/auth/me');
@@ -183,10 +185,26 @@ async function main() {
   check('bekannte Adresse → 204', (await api('POST', '/api/v1/auth/password/forgot', null, { email: reg.email })).status === 204);
   check('falscher Reset-Code → 400', (await api('POST', '/api/v1/auth/password/reset', null, { email: reg.email, code: '000000', newPassword: 'neues-langes-passwort' })).status === 400);
   check('zu kurzes neues Passwort → 400', (await api('POST', '/api/v1/auth/password/reset', null, { email: reg.email, code: CODE, newPassword: 'kurz' })).status === 400);
+  await new Promise((r) => setTimeout(r, 1100)); // `iat` der alten Sitzung liegt damit sicher in einer früheren Sekunde
   check('richtiger Code → Passwort geändert (204)', (await api('POST', '/api/v1/auth/password/reset', null, { email: reg.email, code: CODE, newPassword: 'neues-langes-passwort' })).status === 204);
   check('altes Passwort gilt nicht mehr → 401', (await api('POST', '/api/v1/auth/login', null, { email: reg.email, password: reg.password })).status === 401);
   check('neues Passwort funktioniert', (await api('POST', '/api/v1/auth/login', null, { email: reg.email, password: 'neues-langes-passwort' })).json?.twoFactor === 'email');
   reg.password = 'neues-langes-passwort';
+  check('alte Sitzung ist nach dem Passwort-Reset ungültig → 401', (await authed('GET', '/api/v1/auth/me')).status === 401);
+  await prisma.otpChallenge.deleteMany({ where: { userId: dbUser.id } }); // Test: Sende-Grenze (4 Codes/15 Min.) für dieses Konto zurücksetzen
+  const relog = await api('POST', '/api/v1/auth/login', null, { email: reg.email, password: reg.password });
+  const relog2 = await api('POST', '/api/v1/auth/login/verify', null, { challengeToken: relog.json.challengeToken, code: CODE });
+  wirt.token = relog2.json.token;
+  check('neue Anmeldung nach dem Reset funktioniert', (await authed('GET', '/api/v1/auth/me')).status === 200);
+  console.log('— Schutz vor Passwort-Raten');
+  await prisma.user.create({ data: { email: 'lock@smoketest.invalid', passwordHash: await hashPassword('richtiges-passwort-123'), emailVerifiedAt: new Date() } });
+  let last = 0; for (let i = 0; i < 10; i++) last = (await api('POST', '/api/v1/auth/login', null, { email: 'lock@smoketest.invalid', password: 'falsch-falsch-' + i })).status;
+  check('10 falsche Passwörter → jeweils 401', last === 401);
+  const locked1 = await api('POST', '/api/v1/auth/login', null, { email: 'lock@smoketest.invalid', password: 'richtiges-passwort-123' });
+  check('danach ist das Konto gesperrt – auch das richtige Passwort → 429', locked1.status === 429, locked1);
+  await prisma.user.update({ where: { email: 'lock@smoketest.invalid' }, data: { passwordLockedUntil: new Date(Date.now() - 1000) } });
+  check('nach Ablauf der Sperre funktioniert die Anmeldung wieder', (await api('POST', '/api/v1/auth/login', null, { email: 'lock@smoketest.invalid', password: 'richtiges-passwort-123' })).json?.twoFactor === 'email');
+
   // Sperre nach Fehlversuchen
   const su2 = await authed('POST', '/api/v1/auth/totp/setup', {});
   await authed('POST', '/api/v1/auth/totp/enable', { code: totpCode(su2.json.secret, step()) });
@@ -524,7 +542,9 @@ async function main() {
   check('Abmelden durch den Besitzer → Gerät entfernt', (await api('POST', '/api/v1/push/unsubscribe', owner!.id, { endpoint: sub.endpoint })).status === 204 && (await prisma.pushSubscription.count({ where: { endpoint: sub.endpoint } })) === 0);
 
   console.log('— Verwaltung');
-  const admin = await prisma.user.create({ data: { email: 'admin@smoketest.invalid', emailVerifiedAt: new Date(), isAdmin: true } });
+  const adminNoTotp = await prisma.user.create({ data: { email: 'admin-ohne-2fa@smoketest.invalid', emailVerifiedAt: new Date(), isAdmin: true } });
+  check('Verwaltung ohne Authenticator-App → 403', (await api('GET', '/api/v1/admin/stats', adminNoTotp.id)).status === 403);
+  const admin = await prisma.user.create({ data: { email: 'admin@smoketest.invalid', emailVerifiedAt: new Date(), isAdmin: true, totpEnabledAt: new Date() } });
   const A = (m: string, p: string, b?: unknown, user = admin.id) => api(m, '/api/v1/admin' + p, user, b);
   check('Verwaltung als normaler Nutzer → 403', (await A('GET', '/stats', undefined, owner!.id)).status === 403);
   check('Verwaltung ohne Login → 401', (await api('GET', '/api/v1/admin/stats', null)).status === 401);
@@ -546,6 +566,12 @@ async function main() {
   check('Betrieb entsperren → Ausschreiben wieder möglich', (await A('POST', `/restaurants/${rid}/unblock`)).status === 204 && (await api('POST', '/api/v1/marketplace/shifts', owner!.id, good)).status === 201);
   check('Betriebe suchen', (await A('GET', '/restaurants?q=Smoketest')).json?.some((r: { id: string }) => r.id === rid));
 
+  console.log('— Datenauskunft (DSGVO)');
+  check('Export mit falschem Passwort → 401', (await fauth('POST', '/api/v1/freelancers/me/export', { password: 'falsch-falsch-falsch' })).status === 401);
+  const ex = await fauth('POST', '/api/v1/freelancers/me/export', { password: freg.password });
+  check('Export liefert die eigenen Daten (inkl. SV-Nummer, Steuer-ID, Nachweis, Bewerbungen)', ex.status === 200 && ex.json?.profil?.sozialversicherungsnummer === '15070649C103' && ex.json.profil.steuerId === '86095742719' && !!ex.json.hygienenachweis && ex.json.bewerbungen.length >= 1 && ex.json.konto.email === freg.email, ex.json && Object.keys(ex.json));
+  check('Export enthält keine Zugangsdaten', !JSON.stringify(ex.json).match(/passwordHash|scrypt\$|totpSecret/));
+
   console.log('— Konto löschen (DSGVO)');
   check('Konto löschen mit falschem Passwort → 401', (await fauth('DELETE', '/api/v1/freelancers/me', { password: 'falsch-falsch-falsch' })).status === 401);
   const fuser = await prisma.user.findUniqueOrThrow({ where: { email: freg.email } });
@@ -553,6 +579,7 @@ async function main() {
   check('Konto löschen → 204', del.status === 204, del);
   const gone = await prisma.freelancer.findFirstOrThrow({ where: { userId: fuser.id }, include: { user: true, hygieneCertificate: true } });
   check('Konto anonymisiert (Name, E-Mail, Telefon, Nachweis entfernt)', gone.displayName === 'Gelöschter Nutzer' && gone.user.email.endsWith('@deleted.invalid') && gone.user.phone === null && gone.hygieneCertificate === null && gone.user.deletedAt !== null && !gone.verified);
+  check('die alte Sitzung der gelöschten Aushilfe ist sofort ungültig → 401', (await fauth('GET', '/api/v1/freelancers/me')).status === 401);
   check('Anmeldung nach Löschung nicht mehr möglich → 401', (await api('POST', '/api/v1/auth/login', null, { email: freg.email, password: freg.password })).status === 401);
   check('Meldedatensatz bleibt (Aufbewahrungspflicht)', (await prisma.temporaryEmployee.count({ where: { freelancerId: gone.id } })) >= 1);
 }

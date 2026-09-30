@@ -1,6 +1,9 @@
+import { validateConfig } from './config';
 import { remindAttendance, sweepNoShows } from './services/reliability';
 import { remindSofortmeldung } from './services/sofortmeldung';
 import { dispatchPendingWebhooks } from './services/webhooks';
+
+validateConfig();
 
 /** Hintergrund-Worker: No-Show-Erkennung (nur Betriebe mit Terminal) und Anwesenheits-Erinnerung (alle 5 Min.), Webhook-Zustellung/Retry (alle 30 Sek.). */
 async function safe(name: string, fn: () => Promise<unknown>) {

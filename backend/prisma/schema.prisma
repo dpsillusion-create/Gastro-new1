@@ -74,6 +74,11 @@ model User {
   totpLastStep    Int?
   totpFailures    Int       @default(0)
   totpLockedUntil DateTime?
+  /// Sperre nach zu vielen falschen Passwörtern
+  passwordFailures    Int       @default(0)
+  passwordLockedUntil DateTime?
+  /// Sitzungen, die vor diesem Zeitpunkt ausgestellt wurden, sind ungültig (Passwort-Reset, Kontolöschung)
+  sessionsValidFrom   DateTime?
   otpChallenges   OtpChallenge[]
   pushSubscriptions PushSubscription[]
   /// Verwaltungsrechte (nur per scripts/admin.ts vergeben)

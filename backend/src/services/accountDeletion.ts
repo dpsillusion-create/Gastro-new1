@@ -1,4 +1,5 @@
 import { prisma } from '../db';
+import { invalidateSessions } from '../middleware/auth';
 import { encrypt } from './crypto';
 
 /**
@@ -29,7 +30,8 @@ export async function anonymizeUser(userId: string) {
     await tx.otpChallenge.deleteMany({ where: { userId } });
     await tx.user.update({ where: { id: userId }, data: {
       email: `geloescht-${userId}@deleted.invalid`, phone: null, passwordHash: null, totpSecretEnc: null, totpEnabledAt: null,
-      isAdmin: false, deletedAt: now,
+      isAdmin: false, deletedAt: now, sessionsValidFrom: now,
     } });
   });
+  invalidateSessions(userId);
 }

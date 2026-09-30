@@ -4,8 +4,8 @@ import { z } from 'zod';
 import { TERMS_VERSION } from '../config';
 import { prisma } from '../db';
 import QRCode from 'qrcode';
-import { badRequest, conflict, forbidden, HttpError, notFound, unauthorized } from '../errors';
-import { authenticate } from '../middleware/auth';
+import { badRequest, conflict, forbidden, HttpError, notFound, unauthorized, wrongPassword } from '../errors';
+import { authenticate, invalidateSessions } from '../middleware/auth';
 import { geocodeAddress } from '../services/geocode';
 import { decrypt, encrypt } from '../services/crypto';
 import { checkCode, issueCode, pendingToken, readPendingToken, sessionToken, startSignupVerification } from '../services/otp';
@@ -104,8 +104,16 @@ authRouter.post('/login', strict, async (req, res, next) => {
   try {
     const { email, password } = z.object({ email: z.string().trim().toLowerCase(), password: z.string().max(128) }).parse(req.body);
     const user = await prisma.user.findUnique({ where: { email } });
+    if (user?.passwordLockedUntil && user.passwordLockedUntil > new Date()) throw new HttpError(429, 'LOCKED', 'Zu viele Fehlversuche – bitte in 15 Minuten erneut versuchen');
     const ok = await verifyPassword(password, user?.passwordHash ?? null);
-    if (!user || !ok) throw unauthorized('E-Mail oder Passwort falsch'); // bewusst identische Meldung
+    if (!user || !ok) {
+      if (user) { // Fehlversuche pro Konto zählen (zusätzlich zum Limit pro IP): nach 10 → 15 Minuten Sperre
+        const failures = user.passwordFailures + 1;
+        await prisma.user.update({ where: { id: user.id }, data: failures >= 10 ? { passwordFailures: 0, passwordLockedUntil: new Date(Date.now() + 15 * 60_000) } : { passwordFailures: failures } });
+      }
+      throw unauthorized('E-Mail oder Passwort falsch'); // bewusst identische Meldung
+    }
+    if (user.passwordFailures > 0) await prisma.user.update({ where: { id: user.id }, data: { passwordFailures: 0 } });
     if (!user.emailVerifiedAt) {
       await issueCode(user, 'SIGNUP', 'EMAIL');
       return void res.status(403).json({ error: 'NOT_VERIFIED', message: 'Bitte zuerst die E-Mail-Adresse bestätigen', verificationToken: pendingToken(user.id, 'signup') });
@@ -199,7 +207,8 @@ authRouter.post('/password/reset', strict, async (req, res, next) => {
     const b = z.object({ email: z.string().trim().toLowerCase().email(), code: z.string().max(10), newPassword: z.string().min(10, 'Passwort: mindestens 10 Zeichen').max(128) }).strict().parse(req.body);
     const user = await prisma.user.findUnique({ where: { email: b.email } });
     if (!user || user.deletedAt || !(await checkCode(user.id, 'RESET', 'EMAIL', b.code))) throw badRequest('Code falsch oder abgelaufen');
-    await prisma.user.update({ where: { id: user.id }, data: { passwordHash: await hashPassword(b.newPassword), emailVerifiedAt: user.emailVerifiedAt ?? new Date() } });
+    await prisma.user.update({ where: { id: user.id }, data: { passwordHash: await hashPassword(b.newPassword), emailVerifiedAt: user.emailVerifiedAt ?? new Date(), passwordFailures: 0, passwordLockedUntil: null, sessionsValidFrom: new Date() } });
+    invalidateSessions(user.id); // alle bisherigen Anmeldungen beenden
     res.status(204).end();
   } catch (err) { next(err); }
 });
@@ -235,7 +244,7 @@ authRouter.post('/totp/disable', authenticate, strict, async (req, res, next) =>
   try {
     const { password, code } = z.object({ password: z.string().max(128), code: z.string().max(10) }).strict().parse(req.body);
     const user = await prisma.user.findUniqueOrThrow({ where: { id: req.userId! } });
-    if (!(await verifyPassword(password, user.passwordHash))) throw unauthorized('Passwort falsch');
+    if (!(await verifyPassword(password, user.passwordHash))) throw wrongPassword();
     if (!(await checkTotp(user.id, code))) throw badRequest('Code falsch');
     await prisma.user.update({ where: { id: user.id }, data: { totpSecretEnc: null, totpEnabledAt: null, totpLastStep: null } });
     res.status(204).end();

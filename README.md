@@ -23,7 +23,7 @@ Bewertung und Hygiene-Hinweis sehen, bestätigen, Anwesenheit melden, Schicht ab
 **Aushilfen:** registrieren (SV-Nummer, Steuer-ID, Geburtsdatum mit Prüfziffern, Hygienenachweis-Upload → automatische Freischaltung),
 Schichten im Umkreis per Wisch annehmen, Bewerbungen verfolgen (Adresse erst nach Zusage), Zusage absagen (kurzfristig = Punktabzug), Profil mit Bewertung und Zuverlässigkeit, Konto löschen.
 
-**Sicherheit:** Passwort + zweiter Faktor (Authenticator-App/TOTP oder E-Mail-Code), Passwort-Reset per E-Mail-Code, Brute-Force-Schutz,
+**Sicherheit:** Passwort + zweiter Faktor (Authenticator-App/TOTP oder E-Mail-Code; für die Verwaltung Pflicht), Passwort-Reset per E-Mail-Code (beendet alle alten Sitzungen), Schutz vor Passwort-Raten (pro IP und pro Konto), Push nur an bekannte Push-Dienste, Datenauskunft (Download) und Kontolöschung,
 SV-Nummer/Steuer-ID/Nachweise/Secrets AES-256-GCM-verschlüsselt, Zwischen-Tokens sind keine Sitzungen, Rate-Limits, strikte CSP.
 
 **Zuverlässigkeit:** No-Show → Score −0,25 und 30 Tage Sperre. Automatisch nur bei Betrieben mit angebundenem Terminal (API-Schlüssel),
@@ -56,5 +56,6 @@ legt nur Testdaten `@smoketest.invalid` an und räumt sie weg).
 ## Bewusst nicht enthalten / offen
 - Die **Übermittlung der Sofortmeldung** an die Rentenversicherung: es entstehen nur exportfertige Meldedaten (DEÜV-Schlüssel vor Produktivbetrieb prüfen).
 - Push funktioniert erst nach Einrichten der VAPID-Schlüssel (`npm run vapid`); der echte Versand an Handys ist nur mit einem nachgebauten Push-Dienst getestet. iPhones benötigen die auf den Home-Bildschirm gelegte App.
+- `docs/DATENSCHUTZ-CHECKLISTE.md` ist die Arbeitsgrundlage für Jurist/Datenschutzbeauftragte (Datenflüsse, Maßnahmen, offene Rechtsfragen).
 - Rechtstexte für diese Seite (Impressum/Datenschutz verlinken auf gastroevolution.de) – rechtlich prüfen lassen.
 - Ob und wie lange Hygienenachweis und Meldedaten aufbewahrt werden müssen, klären Steuerberater/Gesundheitsamt.

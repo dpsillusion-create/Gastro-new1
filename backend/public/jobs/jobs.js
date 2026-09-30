@@ -27,7 +27,7 @@ async function api(path, { method = 'GET', body } = {}) {
   const res = await fetch(API + path, { method, headers: { 'content-type': 'application/json', ...(t ? { authorization: 'Bearer ' + t } : {}) }, body: body ? JSON.stringify(body) : undefined });
   if (res.status === 204) return null;
   let data = null; try { data = await res.json(); } catch { /* leer */ }
-  if (res.status === 401 && t) { logout(); throw new Error('Sitzung abgelaufen – bitte erneut anmelden'); }
+  if (res.status === 401 && t && data && data.error === 'UNAUTHORIZED') { logout(); throw new Error('Sitzung abgelaufen – bitte erneut anmelden'); }
   if (res.status === 429) throw new Error('Zu viele Anfragen – bitte kurz warten');
   if (!res.ok) { const err = new Error(errorText(data)); err.body = data; throw err; }
   return data;
@@ -310,7 +310,14 @@ function renderProfile() {
     if (!confirm('Konto wirklich endgültig löschen? Das kann nicht rückgängig gemacht werden.')) return;
     await api('/freelancers/me', { method: 'DELETE', body: { password: pw.value } }); logout(); show('Dein Konto wurde gelöscht. Alles Gute!', true);
   }); });
-  d.replaceChildren(el('h2', {}, 'Konto'), el('p', { class: 'hint' }, 'Du kannst dein Konto jederzeit löschen. Profildaten und Hygienenachweis werden entfernt; gesetzlich aufbewahrungspflichtige Meldedaten früherer Schichten bleiben erhalten.'),
+  const exp = el('form', { class: 'form', hidden: '' }, el('input', { type: 'password', name: 'pw', autocomplete: 'current-password', required: '', placeholder: 'Passwort zur Bestätigung' }), el('button', { class: 'btn ghost' }, 'Datei herunterladen'));
+  exp.addEventListener('submit', (ev) => { ev.preventDefault(); busy(ev.submitter, async () => {
+    const data = await api('/freelancers/me/export', { method: 'POST', body: { password: exp.elements.pw.value } });
+    const a = el('a', { href: URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })), download: 'meine-daten.json' }); a.click(); URL.revokeObjectURL(a.href);
+    exp.reset(); exp.hidden = true; show('Deine Daten wurden heruntergeladen (meine-daten.json).', true);
+  }); });
+  d.replaceChildren(el('h2', {}, 'Konto'),
+    el('p', { class: 'hint' }, 'Auf Wunsch bekommst du alle zu dir gespeicherten Daten als Datei.'), el('button', { class: 'link', type: 'button', onclick: () => { exp.hidden = !exp.hidden; } }, 'Meine Daten herunterladen …'), exp, el('p', { class: 'hint' }, 'Du kannst dein Konto jederzeit löschen. Profildaten und Hygienenachweis werden entfernt; gesetzlich aufbewahrungspflichtige Meldedaten früherer Schichten bleiben erhalten.'),
     el('button', { class: 'link danger', type: 'button', onclick: () => { del.hidden = !del.hidden; } }, 'Konto löschen …'), del);
   PushUI.mount($('push'), { api, show, swScope: '/jobs/' });
   TotpUI.mount($('security'), { api, show, enabled: p.totpEnabled, onChange: async () => { state.me = await api('/freelancers/me'); renderProfile(); } });

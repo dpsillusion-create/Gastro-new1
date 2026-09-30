@@ -3,10 +3,10 @@ import rateLimit from 'express-rate-limit';
 import { z } from 'zod';
 import { TERMS_VERSION } from '../config';
 import { prisma } from '../db';
-import { badRequest, conflict, forbidden, unauthorized } from '../errors';
+import { badRequest, conflict, forbidden, unauthorized, wrongPassword } from '../errors';
 import { authenticate } from '../middleware/auth';
 import { submitComplianceData, validateBirthDate, validateSocialSecurityNumber, validateTaxId } from '../services/compliance';
-import { encrypt } from '../services/crypto';
+import { decrypt, encrypt } from '../services/crypto';
 import { geocodeAddress } from '../services/geocode';
 import { phoneField } from './auth';
 import { startSignupVerification } from '../services/otp';
@@ -136,10 +136,39 @@ freelancerRouter.delete('/me', async (req, res, next) => {
   try {
     const { password } = z.object({ password: z.string().max(128) }).strict().parse(req.body);
     const user = await prisma.user.findUniqueOrThrow({ where: { id: req.userId! }, include: { freelancer: { select: { id: true } } } });
-    if (!(await verifyPassword(password, user.passwordHash))) throw unauthorized('Passwort falsch');
+    if (!(await verifyPassword(password, user.passwordHash))) throw wrongPassword();
     if (user.freelancer && await prisma.temporaryEmployee.count({ where: { freelancerId: user.freelancer.id, validUntil: { gt: new Date() }, shift: { status: 'MATCHED' } } }))
       throw conflict('Du hast noch eine bestätigte Schicht. Bitte erst absolvieren oder mit dem Betrieb klären.');
     await anonymizeUser(user.id);
     res.status(204).end();
+  } catch (err) { next(err); }
+});
+
+/**
+ * Datenauskunft (DSGVO Art. 15/20): alle zur eigenen Person gespeicherten Daten als JSON-Datei. Erfordert das Passwort
+ * (die Datei enthält auch SV-Nummer und Steuer-ID im Klartext) und ist streng begrenzt.
+ */
+freelancerRouter.post('/me/export', rateLimit({ windowMs: 15 * 60_000, limit: Number(process.env.AUTH_RATE_LIMIT ?? 5) }), async (req, res, next) => {
+  try {
+    const { password } = z.object({ password: z.string().max(128) }).strict().parse(req.body);
+    const user = await prisma.user.findUniqueOrThrow({ where: { id: req.userId! }, include: { pushSubscriptions: { select: { createdAt: true, userAgent: true } },
+      freelancer: { include: { hygieneCertificate: { select: { issuedOn: true, uploadedAt: true, mimeType: true } },
+        applications: { orderBy: { createdAt: 'desc' }, select: { status: true, createdAt: true, decidedAt: true, shift: { select: { role: true, startTime: true, endTime: true, hourlyRateCents: true, restaurant: { select: { name: true, city: true } } } } } },
+        tempEmployees: { select: { validFrom: true, validUntil: true, clockedInAt: true, noShowRecordedAt: true, restaurant: { select: { name: true } } } } } } } });
+    if (!(await verifyPassword(password, user.passwordHash))) throw wrongPassword();
+    const f = user.freelancer; if (!f) throw forbidden('Kein Freelancer-Profil');
+    const cancellations = await prisma.shiftCancellation.findMany({ where: { freelancerId: f.id }, select: { cancelledBy: true, hoursBeforeStart: true, late: true, reason: true, createdAt: true } });
+    const out = {
+      erstelltAm: new Date().toISOString(),
+      hinweis: 'Dies sind alle bei GastroEvolution SmartShift Swap zu deiner Person gespeicherten Daten. Gesetzlich aufbewahrungspflichtige Meldedaten früherer Einsätze können nach einer Kontolöschung beim Arbeitgeber bzw. bei uns verbleiben.',
+      konto: { email: user.email, telefon: user.phone, registriertAm: f.createdAt, emailBestaetigtAm: user.emailVerifiedAt, zweiFaktorPerApp: !!user.totpEnabledAt,
+        nutzungsbedingungen: { zugestimmtAm: user.termsAcceptedAt, version: user.termsVersion }, datenschutzEinwilligungAm: f.privacyConsentAt, pushGeraete: user.pushSubscriptions },
+      profil: { name: f.displayName, geburtsdatum: f.birthDate, sozialversicherungsnummer: decrypt(f.socialSecurityNumberEnc), steuerId: decrypt(f.taxIdEnc),
+        faehigkeitenAngegeben: f.claimedSkills, faehigkeitenFreigeschaltet: f.verifiedSkills, freigeschaltet: f.verified, wohnortKoordinaten: f.homeLatitude != null ? { lat: f.homeLatitude, lon: f.homeLongitude } : null,
+        bewertungSumme: f.ratingSum, bewertungAnzahl: f.ratingCount, zuverlaessigkeit: f.reliabilityScore, nichtErschienen: f.noShowCount, kurzfristigeAbsagen: f.lateCancelCount, status: f.accountStatus, gesperrtBis: f.suspendedUntil },
+      hygienenachweis: f.hygieneCertificate ? { ausgestelltAm: f.hygieneCertificate.issuedOn, hochgeladenAm: f.hygieneCertificate.uploadedAt, dateityp: f.hygieneCertificate.mimeType } : null,
+      bewerbungen: f.applications, einsaetze: f.tempEmployees, absagen: cancellations,
+    };
+    res.set({ 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', 'Content-Disposition': 'attachment; filename="meine-daten.json"' }).send(JSON.stringify(out, null, 2));
   } catch (err) { next(err); }
 });

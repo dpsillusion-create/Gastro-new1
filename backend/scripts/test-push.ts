@@ -13,6 +13,7 @@ import { createRequire } from 'module';
 import { PrismaClient } from '@prisma/client';
 import webpush from 'web-push';
 
+process.env.PUSH_ALLOW_ANY = '1'; // nur im Test: lokaler „Push-Dienst“ statt der echten Adressen
 process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0'; // nur für dieses Testskript: selbstsigniertes Zertifikat des Test-Servers
 const keys = webpush.generateVAPIDKeys();
 process.env.VAPID_PUBLIC_KEY = keys.publicKey; process.env.VAPID_PRIVATE_KEY = keys.privateKey;

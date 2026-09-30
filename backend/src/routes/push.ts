@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { prisma } from '../db';
 import { HttpError } from '../errors';
 import { authenticate } from '../middleware/auth';
-import { pushEnabled, vapidPublicKey } from '../services/push';
+import { isAllowedPushEndpoint, pushEnabled, vapidPublicKey } from '../services/push';
 
 /** Geräte für Push-Nachrichten an- und abmelden (angemeldete Nutzer). */
 export const pushRouter = Router();
@@ -18,7 +18,7 @@ pushRouter.get('/public-key', (_req, res, next) => {
 pushRouter.post('/subscribe', async (req, res, next) => {
   try {
     const b = z.object({
-      endpoint: z.string().url().max(1000).refine((u) => u.startsWith('https://'), 'Endpunkt muss https sein'),
+      endpoint: z.string().url().max(1000).refine(isAllowedPushEndpoint, 'Unbekannter Push-Dienst'),
       keys: z.object({ p256dh: z.string().min(20).max(200), auth: z.string().min(8).max(100) }),
     }).parse(req.body);
     const userId = req.userId!;

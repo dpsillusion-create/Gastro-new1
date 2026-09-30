@@ -11,8 +11,10 @@ import { decryptBuffer } from '../services/crypto';
 export const adminRouter = Router();
 adminRouter.use(authenticate, async (req, _res, next) => {
   try {
-    const u = await prisma.user.findUnique({ where: { id: req.userId! }, select: { isAdmin: true, deletedAt: true } });
-    next(u?.isAdmin && !u.deletedAt ? undefined : forbidden('Nur für Administratoren'));
+    const u = await prisma.user.findUnique({ where: { id: req.userId! }, select: { isAdmin: true, deletedAt: true, totpEnabledAt: true } });
+    if (!u?.isAdmin || u.deletedAt) return next(forbidden('Nur für Administratoren'));
+    // Administratoren sehen Personendaten und Nachweise aller Nutzer → zweiter Faktor per Authenticator-App ist Pflicht
+    next(u.totpEnabledAt ? undefined : forbidden('Bitte richte zuerst die Authenticator-App ein (Betriebs-Oberfläche → Einstellungen → Sicherheit).'));
   } catch (e) { next(e); }
 });
 const uid = (req: { userId?: string }) => req.userId!;
@@ -72,7 +74,7 @@ adminRouter.get('/freelancers/:id/hygiene-certificate', async (req, res, next) =
     const cert = await prisma.hygieneCertificate.findUnique({ where: { freelancerId: id } });
     if (!cert) throw notFound('Kein Hygienenachweis hinterlegt');
     await audit(uid(req), 'hygiene-certificate.view', 'Freelancer', id);
-    res.set({ 'Content-Type': cert.mimeType, 'Cache-Control': 'no-store', 'Content-Disposition': 'inline; filename="hygienenachweis"' }).send(decryptBuffer(Buffer.from(cert.dataEnc)));
+    res.set({ 'Content-Type': cert.mimeType, 'Cache-Control': 'no-store', 'Content-Security-Policy': "default-src 'none'; sandbox", 'Content-Disposition': 'inline; filename="hygienenachweis"' }).send(decryptBuffer(Buffer.from(cert.dataEnc)));
   } catch (e) { next(e); }
 });
 

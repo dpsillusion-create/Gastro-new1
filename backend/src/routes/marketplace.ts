@@ -124,7 +124,7 @@ marketplaceRouter.get('/my-shifts', async (req, res, next) => {
       where: { restaurant: { members: { some: { userId: uid(req), role: { in: ['OWNER', 'MANAGER'] } } } } },
       orderBy: { startTime: 'desc' }, take: 100,
       select: {
-        id: true, role: true, requiredSkill: true, requirements: true, hourlyRateCents: true, startTime: true,
+        id: true, role: true, requiredSkill: true, requirements: true, activityKey: true, hourlyRateCents: true, startTime: true,
         endTime: true, status: true, rating: true, slotIndex: true, slotCount: true, restaurant: { select: { id: true, name: true } },
         _count: { select: { applications: { where: { status: 'PENDING' } } } },
         assignment: { select: {
@@ -211,7 +211,7 @@ marketplaceRouter.get('/shifts/:id/hygiene-certificate', async (req, res, next) 
     if (!shift.assignment || (shift.status !== 'MATCHED' && shift.status !== 'COMPLETED')) throw forbidden('Erst nach der Zusage einsehbar');
     const cert = await prisma.hygieneCertificate.findUnique({ where: { freelancerId: shift.assignment.freelancerId } });
     if (!cert) throw notFound('Kein Hygienenachweis hinterlegt');
-    res.set({ 'Content-Type': cert.mimeType, 'Cache-Control': 'no-store', 'Content-Disposition': 'inline; filename="hygienenachweis"' })
+    res.set({ 'Content-Type': cert.mimeType, 'Cache-Control': 'no-store', 'Content-Security-Policy': "default-src 'none'; sandbox", 'Content-Disposition': 'inline; filename="hygienenachweis"' })
       .send(decryptBuffer(Buffer.from(cert.dataEnc)));
   } catch (err) { next(err); }
 });
