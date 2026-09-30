@@ -127,3 +127,23 @@ export async function acceptApplication(userId: string, shiftId: string, freelan
   void dispatchPendingWebhooks().catch(console.error);
   return result;
 }
+
+/**
+ * Wirt schließt eine Schicht ab und bewertet die Aushilfe (1–5).
+ * Voraussetzungen: Schicht MATCHED, Anwesenheit bestätigt (Einchecken), Schichtende erreicht.
+ * Atomar: der Statuswechsel MATCHED→COMPLETED verhindert Doppel-Bewertungen.
+ */
+export async function completeShift(userId: string, shiftId: string, rating: number) {
+  const shift = await prisma.marketplaceShift.findUnique({ where: { id: shiftId } });
+  if (!shift) throw notFound('Schicht nicht gefunden');
+  await assertRestaurantManager(userId, shift.restaurantId);
+  if (shift.endTime > new Date()) throw conflict('Die Schicht ist noch nicht beendet');
+  await prisma.$transaction(async (tx) => {
+    const temp = await tx.temporaryEmployee.findUnique({ where: { shiftId } });
+    if (!temp || shift.status !== 'MATCHED') throw conflict('Nur bestätigte Schichten können abgeschlossen werden');
+    if (!temp.clockedInAt) throw conflict('Bitte zuerst die Anwesenheit bestätigen (oder Nichterscheinen melden)');
+    const r = await tx.marketplaceShift.updateMany({ where: { id: shiftId, status: 'MATCHED' }, data: { status: 'COMPLETED', rating } });
+    if (r.count !== 1) throw conflict('Schicht wurde bereits abgeschlossen');
+    await tx.freelancer.update({ where: { id: temp.freelancerId }, data: { ratingSum: { increment: rating }, ratingCount: { increment: 1 } } });
+  });
+}

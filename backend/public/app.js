@@ -109,6 +109,30 @@ async function renderApplicants(box, shift) {
   }
 }
 
+// Anwesenheit und Bewertung nach der Schicht
+function matchedControls(s) {
+  const a = s.assignment, now = Date.now(), start = new Date(s.startTime).getTime(), end = new Date(s.endTime).getTime();
+  const box = el('div', { class: 'applicants' }, el('div', { class: 'meta' }, `Aushilfe: ${a.freelancer.displayName}`));
+  const act = (label, fn, cls = 'secondary') => el('button', { class: cls, onclick: (ev) => busy(ev.target, async () => { await fn(); await loadShifts(); }) }, label);
+  if (a.noShowRecordedAt) box.append(el('div', { class: 'meta' }, 'Nicht erschienen – die Aushilfe wurde gesperrt.'));
+  else if (!a.clockedInAt) {
+    const row = el('div', { class: 'actions' });
+    if (now >= start - 30 * 60000) row.append(act('Ist erschienen', () => api(`/marketplace/shifts/${s.id}/attendance`, { method: 'POST', body: { status: 'PRESENT' } }), 'btn accent'));
+    else row.append(el('span', { class: 'meta' }, 'Anwesenheit bestätigen ab ' + new Date(start - 30 * 60000).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' }) + ' Uhr'));
+    if (now >= start + 15 * 60000) row.append(act('Nicht erschienen', async () => {
+      if (!confirm('Nichterscheinen melden? Die Aushilfe wird dadurch gesperrt.')) throw new Error('Abgebrochen');
+      await api(`/marketplace/shifts/${s.id}/attendance`, { method: 'POST', body: { status: 'NO_SHOW' } });
+    }));
+    box.append(row);
+  } else if (now < end) box.append(el('div', { class: 'meta' }, 'Eingecheckt ✓ – nach Schichtende kannst du die Aushilfe bewerten.'));
+  else {
+    const row = el('div', { class: 'actions' }, el('span', { class: 'meta' }, 'Schicht abschließen und bewerten:'));
+    for (let n = 1; n <= 5; n++) row.append(act('★'.repeat(n), () => api(`/marketplace/shifts/${s.id}/complete`, { method: 'POST', body: { rating: n } })));
+    box.append(row);
+  }
+  return box;
+}
+
 function card(s) {
   const c = el('article', { class: 'shift' },
     el('header', {},
@@ -124,6 +148,8 @@ function card(s) {
       await api(`/marketplace/shifts/${s.id}/cancel`, { method: 'POST' }); await loadShifts();
     }) }, 'Zurückziehen')));
   }
+  if (s.status === 'MATCHED' && s.assignment) c.append(matchedControls(s));
+  if (s.status === 'COMPLETED' && s.rating) c.append(el('div', { class: 'meta' }, `Abgeschlossen · Bewertung ${'★'.repeat(s.rating)}${'☆'.repeat(5 - s.rating)}`));
   if (s.status === 'MATCHED' && s.sofortmeldung) {
     const ok = s.sofortmeldung.status === 'READY';
     c.append(el('div', { class: 'actions' },

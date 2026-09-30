@@ -6,6 +6,7 @@ import { badRequest, conflict, forbidden, notFound, unauthorized } from '../erro
 import { assertRestaurantManager, assertRestaurantOwner, authenticate, requireFreelancer } from '../middleware/auth';
 import { decrypt } from '../services/crypto';
 import * as svc from '../services/marketplaceService';
+import { recordClockIn, registerNoShow } from '../services/reliability';
 
 const Skill = z.enum(['BAR', 'SERVICE', 'KITCHEN', 'DISHWASHING']);
 const wrap = (fn: (req: Request, res: Response) => Promise<unknown>): RequestHandler =>
@@ -120,13 +121,17 @@ marketplaceRouter.get('/my-shifts', async (req, res, next) => {
       orderBy: { startTime: 'desc' }, take: 100,
       select: {
         id: true, role: true, requiredSkill: true, requirements: true, hourlyRateCents: true, startTime: true,
-        endTime: true, status: true, restaurant: { select: { id: true, name: true } },
+        endTime: true, status: true, rating: true, restaurant: { select: { id: true, name: true } },
         _count: { select: { applications: { where: { status: 'PENDING' } } } },
-        assignment: { select: { immediateNotification: { select: { status: true, missingFields: true } } } },
+        assignment: { select: {
+          clockedInAt: true, noShowRecordedAt: true, freelancer: { select: { displayName: true } },
+          immediateNotification: { select: { status: true, missingFields: true } },
+        } },
       },
     });
     res.json(shifts.map(({ _count, assignment, ...s }) => ({
       ...s, pendingApplications: _count.applications, sofortmeldung: assignment?.immediateNotification ?? null,
+      assignment: assignment ? { clockedInAt: assignment.clockedInAt, noShowRecordedAt: assignment.noShowRecordedAt, freelancer: assignment.freelancer } : null,
     })));
   } catch (err) { next(err); }
 });
@@ -151,6 +156,38 @@ marketplaceRouter.post('/shifts/:id/withdraw', async (req, res, next) => {
     const f = await prisma.freelancer.findUnique({ where: { userId: uid(req) }, select: { id: true } });
     if (!f) throw forbidden('Kein Freelancer-Profil');
     await svc.withdrawApplication(f.id, shiftId);
+    res.status(204).end();
+  } catch (err) { next(err); }
+});
+
+/**
+ * Wirt/Manager: Anwesenheit der bestätigten Aushilfe melden (bis das Zeiterfassungsterminal automatisch einchecken lässt).
+ * PRESENT = ist erschienen (Einchecken, ab 30 Min. vor Beginn); NO_SHOW = nicht erschienen (frühestens 15 Min. nach Beginn)
+ * → senkt den Zuverlässigkeits-Score und sperrt die Aushilfe (siehe services/reliability.ts).
+ */
+marketplaceRouter.post('/shifts/:id/attendance', async (req, res, next) => {
+  try {
+    const shiftId = idParam.parse(req.params.id);
+    const { status } = z.object({ status: z.enum(['PRESENT', 'NO_SHOW']) }).strict().parse(req.body);
+    const shift = await prisma.marketplaceShift.findUnique({ where: { id: shiftId } });
+    if (!shift) throw notFound('Schicht nicht gefunden');
+    await assertRestaurantManager(uid(req), shift.restaurantId);
+    if (shift.status !== 'MATCHED') throw conflict('Nur bestätigte Schichten');
+    if (status === 'PRESENT') {
+      if (Date.now() < shift.startTime.getTime() - 30 * 60_000) throw conflict('Einchecken frühestens 30 Minuten vor Schichtbeginn');
+      await recordClockIn(shiftId);
+      return void res.status(204).end();
+    }
+    res.json(await registerNoShow(shiftId));
+  } catch (err) { next(err); }
+});
+
+/** Wirt/Manager: Schicht abschließen und die Aushilfe bewerten (1–5 Sterne). */
+marketplaceRouter.post('/shifts/:id/complete', async (req, res, next) => {
+  try {
+    const shiftId = idParam.parse(req.params.id);
+    const { rating } = z.object({ rating: z.number().int().min(1).max(5) }).strict().parse(req.body);
+    await svc.completeShift(uid(req), shiftId, rating);
     res.status(204).end();
   } catch (err) { next(err); }
 });

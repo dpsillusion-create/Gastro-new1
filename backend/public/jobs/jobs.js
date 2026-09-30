@@ -179,7 +179,7 @@ function renderApps() {
     const c = el('article', { class: 'app' },
       el('header', {}, el('div', {}, el('h3', {}, `${s.role} · ${euro(s.hourlyRateCents)}/Std.`),
         el('div', { class: 'meta' }, `${r.name} · ${r.city}`), el('div', { class: 'meta' }, `${fmtTime(s.startTime)} – ${new Date(s.endTime).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })} Uhr`)),
-        el('span', { class: 'pill ' + status }, APP_LABEL[status] || status)));
+        el('span', { class: 'pill ' + status }, status === 'ACCEPTED' && s.status === 'COMPLETED' ? 'Abgeschlossen' : (APP_LABEL[status] || status))));
     if (status === 'ACCEPTED' && r.street) {
       c.append(el('div', { class: 'addr' }, `📍 ${r.street}, ${r.zip} ${r.city}`),
         el('p', { class: 'hint' }, 'Bitte pünktlich sein und vor Ort am Zeiterfassungsterminal einchecken.'),

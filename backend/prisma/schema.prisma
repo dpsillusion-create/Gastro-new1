@@ -93,6 +93,8 @@ model MarketplaceShift {
   latitude      Float
   longitude     Float
   status        ShiftStatus @default(OPEN)
+  /// Bewertung (1–5) der Aushilfe durch den Wirt beim Abschluss
+  rating        Int?
   /// Optimistic-Locking-Zähler gegen Doppel-Zusagen
   version       Int         @default(0)
   createdById   String

@@ -7,7 +7,6 @@
 import { PrismaClient } from '@prisma/client';
 import jwt from 'jsonwebtoken';
 import { encrypt } from '../src/services/crypto';
-import { registerNoShow } from '../src/services/reliability';
 
 const prisma = new PrismaClient();
 const BASE = process.env.BASE_URL ?? `http://127.0.0.1:${process.env.PORT ?? 3000}`;
@@ -168,10 +167,34 @@ async function main() {
   const apps2 = await fauth('GET', '/api/v1/freelancers/me/applications');
   check('nach Bestätigung: ACCEPTED mit Adresse', apps2.json?.[0]?.status === 'ACCEPTED' && apps2.json[0].shift.restaurant.street === 'Teststr. 1', apps2);
 
+  console.log('— Anwesenheit, Abschluss und Bewertung');
+  const att = (id: string, status: string) => api('POST', `/api/v1/marketplace/shifts/${id}/attendance`, owner!.id, { status });
+  const done = (id: string, rating: number, user = owner!.id) => api('POST', `/api/v1/marketplace/shifts/${id}/complete`, user, { rating });
+  check('Einchecken zu früh → 409', (await att(shift2.json.id, 'PRESENT')).status === 409);
+  check('Abschluss ohne Anwesenheit/vor Ende → 409', (await done(shift2.json.id, 5)).status === 409);
+  const past = (mins: number, len: number) => ({ startTime: new Date(Date.now() - mins * 60_000), endTime: new Date(Date.now() - (mins - len) * 60_000) });
+  const movePast = async (id: string, mins: number, len: number) => {
+    const t = past(mins, len);
+    await prisma.marketplaceShift.update({ where: { id }, data: t });
+    await prisma.temporaryEmployee.update({ where: { shiftId: id }, data: { validFrom: t.startTime, validUntil: t.endTime } });
+  };
+  await movePast(shift2.json.id, 180, 120); // vor 3 h begonnen, vor 1 h beendet
+  check('Fremder Nutzer kann nicht einchecken → 403', (await api('POST', `/api/v1/marketplace/shifts/${shift2.json.id}/attendance`, stranger!.id, { status: 'PRESENT' })).status === 403);
+  check('Abschluss ohne Anwesenheit → 409', (await done(shift2.json.id, 5)).status === 409);
+  check('Ist erschienen → 204', (await att(shift2.json.id, 'PRESENT')).status === 204);
+  check('Nichterscheinen nach Einchecken → 409', (await att(shift2.json.id, 'NO_SHOW')).status === 409);
+  check('Bewertung 6 → 400', (await done(shift2.json.id, 6)).status === 400);
+  check('Bewertung durch Fremde → 403', (await done(shift2.json.id, 5, stranger!.id)).status === 403);
+  check('Abschluss mit 4 Sternen → 204', (await done(shift2.json.id, 4)).status === 204);
+  check('doppelte Bewertung → 409', (await done(shift2.json.id, 1)).status === 409);
+  const after = await fauth('GET', '/api/v1/freelancers/me');
+  check('Aushilfe hat Bewertung 4.0 (1)', after.json?.rating === 4 && after.json?.ratingCount === 1, after.json);
+
   console.log('— No-Show');
-  const ns = await registerNoShow(shiftId, new Date(start.getTime() + 20 * 60_000));
-  check('No-Show senkt Score auf 0.75 und sperrt', !ns.alreadyRecorded && ns.reliabilityScore === 0.75 && ns.suspended, ns);
-  check('No-Show idempotent', (await registerNoShow(shiftId, new Date(start.getTime() + 25 * 60_000))).alreadyRecorded === true);
+  await movePast(shiftId, 30, 480); // vor 30 Min. begonnen, kein Check-in
+  const ns = await att(shiftId, 'NO_SHOW');
+  check('No-Show senkt Score auf 0.75 und sperrt', ns.status === 200 && ns.json.reliabilityScore === 0.75 && ns.json.suspended, ns);
+  check('No-Show idempotent', (await att(shiftId, 'NO_SHOW')).json?.alreadyRecorded === true);
   check('gesperrter Freelancer → 403', (await api('GET', '/api/v1/marketplace/search', fu!.id)).status === 403);
 }
 
